@@ -61,6 +61,25 @@ class Config:
         else:
             self.allowed_models = []
 
+        # Detect and set adaptive paths
+        self.input_path = os.environ.get("INPUT_PATH", "/input/tasks.json")
+        if not os.path.exists(os.path.dirname(self.input_path)) or not os.access(os.path.dirname(self.input_path), os.R_OK):
+            self.input_path = "./input/tasks.json"
+
+        self.output_path = os.environ.get("OUTPUT_PATH", "/output/results.json")
+        out_dir = os.path.dirname(self.output_path)
+        try:
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
+            # Test writability of output directory
+            test_file = os.path.join(out_dir, ".write_test")
+            with open(test_file, "w") as f:
+                f.write("")
+            os.remove(test_file)
+        except (OSError, IOError):
+            self.output_path = "./output/results.json"
+            os.makedirs("./output", exist_ok=True)
+
         # Auto-assign small and large models based on size
         self._assign_model_tiers()
 
