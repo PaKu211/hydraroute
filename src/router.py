@@ -179,13 +179,21 @@ def route_task(
 
     answer: str | None = None
 
+    # Apply prompt compression for API calls (Tier 1 & Tier 2) to save input tokens
+    try:
+        from src.compression import PromptCompressor
+        instruction_optimized = PromptCompressor().optimize(instruction, normalized_cat)
+    except Exception as e:
+        logger.warning("Prompt compression failed: %s", e)
+        instruction_optimized = instruction
+
     # ── Tier 1: Small model ──
     if target_tier <= 1 and config.small_model:
         try:
             answer = tier_one.execute(
                 client=client,
                 model=config.small_model,
-                instruction=instruction,
+                instruction=instruction_optimized,
                 category=category,
                 category_config=cat_config,
                 task_id=task_id,
@@ -206,7 +214,7 @@ def route_task(
             answer = tier_two.execute(
                 client=client,
                 model=config.large_model,
-                instruction=instruction,
+                instruction=instruction_optimized,
                 category=category,
                 category_config=t2_config,
                 task_id=task_id,
