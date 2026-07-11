@@ -207,18 +207,55 @@ def main() -> None:
         save_results([], config.output_path)
         sys.exit(0)
 
-    logger.info("Processing %d tasks (concurrent, max 3 workers)", len(tasks))
+    # ── Pre-deduplicate tasks to avoid cache stampede and save API tokens ──
+    unique_tasks = []
+    seen_keys = set()
+    dup_map = {}  # key -> list of task_ids
 
-    # ── 5. Process tasks with concurrency ──
+    for task in tasks:
+        inst = task.get("instruction", "").strip()
+        cat = task.get("category", "").strip()
+        key = f"{cat}:{inst}"
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_tasks.append(task)
+            dup_map[key] = [task["task_id"]]
+        else:
+            dup_map[key].append(task["task_id"])
+
+    dedup_saved = len(tasks) - len(unique_tasks)
+    logger.info(
+        "Loaded %d tasks. Pre-deduplicated down to %d unique tasks (%d duplicate(s) bypassed).",
+        len(tasks), len(unique_tasks), dedup_saved
+    )
+
+    logger.info("Processing %d unique tasks (concurrent, max 3 workers)", len(unique_tasks))
+
+    # ── 5. Process unique tasks with concurrency ──
     try:
-        results = process_tasks_concurrent(
-            tasks, config, client,
+        unique_results = process_tasks_concurrent(
+            unique_tasks, config, client,
             max_workers=3,
             per_task_timeout=25.0,
         )
     except Exception as e:
         logger.error("Concurrent processing failed (%s), falling back to sequential", e)
-        results = process_tasks_sequential(tasks, config, client)
+        unique_results = process_tasks_sequential(unique_tasks, config, client)
+
+    # ── Expand unique results back to original tasks ──
+    unique_results_map = {res["task_id"]: res["answer"] for res in unique_results}
+    results = []
+    for task in tasks:
+        inst = task.get("instruction", "").strip()
+        cat = task.get("category", "").strip()
+        key = f"{cat}:{inst}"
+        # Fetch answer from representative unique task
+        rep_task_id = dup_map[key][0]
+        answer = unique_results_map.get(rep_task_id, "I could not determine the answer.")
+        results.append({
+            "task_id": task["task_id"],
+            "answer": answer
+        })
 
     # ── 6. Save results ──
     save_results(results, config.output_path)

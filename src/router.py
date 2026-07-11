@@ -134,12 +134,31 @@ def estimate_difficulty(instruction: str, category: str) -> int:
 
 
 def _normalize_json_string(text: str) -> str:
-    """Strips markdown code block wrappers from JSON output if present."""
-    import re
+    """Extracts and normalizes a JSON object or list from text, stripping markdown and text wrappers, and compacts it (Headroom compression)."""
+    if not text:
+        return ""
     cleaned = text.strip()
-    match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", cleaned, re.DOTALL)
+    import re
+    import json
+
+    # 1. Search for a JSON structure '{...}' or '[...]'
+    match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
     if match:
-        return match.group(1).strip()
+        json_candidate = match.group(1).strip()
+        try:
+            parsed = json.loads(json_candidate)
+            # Serialize to minified JSON (Headroom compression)
+            return json.dumps(parsed, separators=(",", ":"))
+        except Exception:
+            pass
+
+    # 2. Fallback to parsing the raw cleaned string
+    try:
+        parsed = json.loads(cleaned)
+        return json.dumps(parsed, separators=(",", ":"))
+    except Exception:
+        pass
+
     return cleaned
 
 
@@ -239,7 +258,7 @@ def route_task(
         # Setup fallback prompt config
         cat_config = {
             "system_prompt": "Solve this and output only the final numerical answer.",
-            "max_tokens": cat_config.get("max_tokens", 50),
+            "max_tokens": cat_config.get("max_tokens", 150),
             "temperature": 0.0,
         }
     else:

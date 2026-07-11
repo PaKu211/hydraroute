@@ -5,6 +5,11 @@
     "instruction": "What is the capital of France?"
   },
   {
+    "task_id": "task_001_dup",
+    "category": "factual_knowledge",
+    "instruction": "What is the capital of France?"
+  },
+  {
     "task_id": "task_002",
     "category": "math",
     "instruction": "Solve for x: 2x + 10 = 30"
@@ -15,9 +20,14 @@
     "instruction": "The product is amazing and I love it!"
   },
   {
+    "task_id": "task_003_dup",
+    "category": "sentiment_classification",
+    "instruction": "The product is amazing and I love it!"
+  },
+  {
     "task_id": "task_004",
     "category": "text_summarization",
-    "instruction": "Summarize the following text in one sentence: Artificial intelligence has transformed numerous industries over the past decade. From healthcare diagnostics that can detect diseases earlier than human physicians, to autonomous vehicles navigating complex urban environments, AI systems are becoming integral to modern life. However, this rapid advancement has also raised significant ethical concerns about privacy, job displacement, and the concentration of power among a few large technology companies."
+    "instruction": "Please kindly summarize the following text in one sentence, thank you: Artificial intelligence has transformed numerous industries over the past decade. From healthcare diagnostics that can detect diseases earlier than human physicians, to autonomous vehicles navigating complex urban environments, AI systems are becoming integral to modern life. However, this rapid advancement has also raised significant ethical concerns about privacy, job displacement, and the concentration of power among a few large technology companies."
   },
   {
     "task_id": "task_005",
@@ -38,5 +48,10 @@
     "task_id": "task_008",
     "category": "code_generation",
     "instruction": "Write a Python function to check if a number is prime. Return True if prime, False otherwise."
+  },
+  {
+    "task_id": "task_009_complex_math",
+    "category": "math",
+    "instruction": "Solve for x: x + y = 10 and x - y = 4"
   }
 ]

@@ -56,10 +56,15 @@ def execute(
                 # Disable thinking/reasoning to save tokens
                 extra_params["extra_body"] = {"thinking": {"type": "disabled"}}
 
+            import time
+            import random
+            seed = f"{int(time.time())}-{random.randint(1000, 9999)}"
+            system_prompt_seeded = f"{system_prompt}\n(Ref: {seed})"
+
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_prompt_seeded},
                     {"role": "user", "content": instruction},
                 ],
                 max_tokens=max_tokens,
@@ -68,6 +73,16 @@ def execute(
             )
 
             answer = response.choices[0].message.content
+            # Fallback to reasoning_content if content is empty (common in reasoning models hitting length limits)
+            if not answer or not answer.strip():
+                msg = response.choices[0].message
+                reasoning = getattr(msg, "reasoning_content", None)
+                if not reasoning and hasattr(msg, "model_extra") and msg.model_extra:
+                    reasoning = msg.model_extra.get("reasoning_content")
+                if reasoning:
+                    answer = reasoning.strip()
+                    logger.info("Using reasoning_content as fallback content for task %s", task_id)
+
             if answer:
                 answer = answer.strip()
 
@@ -85,7 +100,8 @@ def execute(
             return answer
 
         except RateLimitError as e:
-            wait = BACKOFF_BASE ** attempt
+            import random
+            wait = (BACKOFF_BASE ** attempt) + random.uniform(0.5, 1.5)
             logger.warning(
                 "Tier 1 rate limit (attempt %d/%d) for task %s, retrying in %.1fs: %s",
                 attempt, MAX_RETRIES, task_id, wait, e,
@@ -94,7 +110,9 @@ def execute(
         except APIError as e:
             logger.error("Tier 1 API error for task %s: %s", task_id, e)
             if attempt < MAX_RETRIES:
-                time.sleep(BACKOFF_BASE)
+                import random
+                wait = BACKOFF_BASE + random.uniform(0.5, 1.0)
+                time.sleep(wait)
             else:
                 return None
         except Exception as e:

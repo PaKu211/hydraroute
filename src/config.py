@@ -150,13 +150,13 @@ CATEGORY_CONFIG = {
     "math": {
         "tier": 0,  # Zero-cost: Python execution
         "system_prompt": "Solve this and output only the final numerical answer.",
-        "max_tokens": 50,
+        "max_tokens": 150,
         "temperature": 0.0,
     },
     "mathematical_reasoning": {
         "tier": 0,
         "system_prompt": "Solve this and output only the final numerical answer.",
-        "max_tokens": 50,
+        "max_tokens": 150,
         "temperature": 0.0,
     },
     "sentiment_classification": {

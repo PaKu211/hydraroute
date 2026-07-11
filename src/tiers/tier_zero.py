@@ -43,6 +43,14 @@ def execute(instruction: str) -> str | None:
 def _try_arithmetic(text: str) -> str | None:
     """Try to extract and evaluate a simple arithmetic expression."""
     cleaned = text.lower()
+    
+    # If the text is an algebraic equation or contains variables, skip arithmetic evaluation
+    if "=" in text or any(v in cleaned for v in ["solve for", "value of", "find x", "find y", "find z"]):
+        return None
+    # Skip if contains variable letters like standalone x, y, z
+    if re.search(r"\b[xyz]\b", cleaned):
+        return None
+
     for prefix in [
         "what is", "what's", "calculate", "compute", "evaluate",
         "find the value of", "find", "how much is", "what does",
@@ -167,31 +175,19 @@ def _extract_equation_v2(text: str) -> str | None:
     return None
 
 
-def _solve_with_sympy(equation_str: str, transformations=None) -> str | None:
-    """Parse and solve an equation string using sympy AST parser."""
+def _solve_sympy_worker(conn, equation_str: str) -> None:
+    """Worker function to solve equation in an isolated process."""
     try:
         import sympy
         from sympy.parsing.sympy_parser import (
             parse_expr, standard_transformations,
             implicit_multiplication_application,
         )
-        if transformations is None:
-            transformations = standard_transformations + (implicit_multiplication_application,)
-
-        if "=" not in equation_str:
-            return None
+        transformations = standard_transformations + (implicit_multiplication_application,)
 
         parts = equation_str.split("=", 1)
         lhs_str = parts[0].strip()
         rhs_str = parts[1].strip()
-
-        if not lhs_str or not rhs_str:
-            return None
-
-        # Safety: only allow algebraic-safe chars
-        safe_pattern = re.compile(r"^[\d\s\+\-\*/\.\(\)a-zA-Z\^]+$")
-        if not safe_pattern.match(lhs_str) or not safe_pattern.match(rhs_str):
-            return None
 
         lhs = parse_expr(lhs_str, transformations=transformations)
         rhs = parse_expr(rhs_str, transformations=transformations)
@@ -200,32 +196,86 @@ def _solve_with_sympy(equation_str: str, transformations=None) -> str | None:
         free_vars = list(equation.free_symbols)
 
         if not free_vars:
-            return None
+            conn.send(("result", None))
+            return
 
-        # Solve for first symbol found (usually x)
-        # Prefer x over other variables
         var = next((v for v in free_vars if str(v) == "x"), free_vars[0])
         solutions = sympy.solve(equation, var)
 
         if not solutions:
-            return None
+            conn.send(("result", None))
+            return
 
         if isinstance(solutions, list):
             if len(solutions) == 1:
                 sol = solutions[0]
                 try:
                     val = int(sol)
-                    return str(val)
+                    conn.send(("result", str(val)))
+                    return
                 except (TypeError, ValueError):
-                    return str(sol)
-            return ", ".join(
-                str(int(s)) if s.is_integer else str(s) for s in solutions
+                    conn.send(("result", str(sol)))
+                    return
+            res = ", ".join(
+                str(int(s)) if hasattr(s, 'is_integer') and s.is_integer else str(s) for s in solutions
             )
+            conn.send(("result", res))
+            return
 
-        return str(solutions)
-
+        conn.send(("result", str(solutions)))
     except Exception as e:
-        logger.debug("Sympy solve failed for '%s': %s", equation_str, e)
+        conn.send(("error", str(e)))
+
+
+def _solve_with_sympy(equation_str: str, transformations=None) -> str | None:
+    """Parse and solve an equation string using sympy with process-level isolation to prevent hangs."""
+    if "=" not in equation_str:
+        return None
+
+    parts = equation_str.split("=", 1)
+    lhs_str = parts[0].strip()
+    rhs_str = parts[1].strip()
+
+    if not lhs_str or not rhs_str:
+        return None
+
+    # Safety: only allow algebraic-safe chars
+    safe_pattern = re.compile(r"^[\d\s\+\-\*/\.\(\)a-zA-Z\^]+$")
+    if not safe_pattern.match(lhs_str) or not safe_pattern.match(rhs_str):
+        return None
+
+    import multiprocessing
+    # Use 'fork' context on Unix for sub-millisecond process creation and inheritance
+    try:
+        ctx = multiprocessing.get_context("fork")
+    except ValueError:
+        ctx = multiprocessing
+
+    parent_conn, child_conn = ctx.Pipe()
+
+    p = ctx.Process(
+        target=_solve_sympy_worker,
+        args=(child_conn, equation_str)
+    )
+    p.start()
+    
+    # Wait for child process to output result with strict 2.0s timeout
+    if parent_conn.poll(2.0):
+        try:
+            status, val = parent_conn.recv()
+            p.join()
+            if status == "result":
+                return val
+            else:
+                logger.debug("Sympy solve failed: %s", val)
+                return None
+        except Exception as e:
+            logger.debug("Error receiving from Sympy subprocess pipe: %s", e)
+            return None
+    else:
+        logger.warning("Sympy solve timed out for '%s' (2.0s limit). Terminating process...", equation_str)
+        p.terminate()
+        p.join()
         return None
 
 
