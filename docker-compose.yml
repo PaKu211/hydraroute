@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  hydraroute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    environment:
+      - FIREWORKS_API_KEY=${FIREWORKS_API_KEY}
+      - FIREWORKS_BASE_URL=${FIREWORKS_BASE_URL:-https://api.fireworks.ai/inference/v1}
+      - ALLOWED_MODELS=${ALLOWED_MODELS}
+    volumes:
+      - ./input:/input
+      - ./output:/output
