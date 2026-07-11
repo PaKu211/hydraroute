@@ -72,12 +72,16 @@ def get_category_config(category: str) -> dict:
 
 
 def estimate_difficulty(instruction: str, category: str) -> int:
-    """Dynamically estimate prompt difficulty using local heuristics.
+    """Dynamically estimate prompt difficulty using local heuristics (Marginal Utility / RouteLMT inspired).
 
     Returns:
         1: Tier 1 (Small model is sufficient)
         2: Tier 2 (Large reasoning model required)
     """
+    # Marginal Utility: Sentiment classification NEVER needs Tier 2 reasoning (utility is zero)
+    if category == "sentiment_classification":
+        return 1
+
     text = instruction.lower()
     word_count = len(text.split())
 
@@ -90,8 +94,12 @@ def estimate_difficulty(instruction: str, category: str) -> int:
     ]
     has_indicators = any(ind in text for ind in complex_indicators)
 
-    # Coding structural characters (often indicates code block analysis)
+    # Coding structural characters (indicates code block analysis)
     has_code_structure = "```" in text or "def " in text or "class " in text or "import " in text
+
+    # Ambiguity and conditional logic clauses (indicates high reasoning difficulty)
+    conditional_keywords = ["unless", "except when", "only if", "provided that", "otherwise"]
+    has_conditionals = any(cond in text for cond in conditional_keywords)
 
     # Score calculation
     score = 0
@@ -104,23 +112,78 @@ def estimate_difficulty(instruction: str, category: str) -> int:
         score += 2
     if has_code_structure:
         score += 3
+    if has_conditionals:
+        score += 2  # Ambiguity penalty: escalate to protect Accuracy Gate
 
-    # Dynamic adjustment
+    # Dynamic adjustment based on Marginal Utility
     if category in ("code_generation", "code_debugging", "logical_reasoning"):
-        # Default is Tier 2, but downgrade to Tier 1 if extremely short and simple
-        if score <= 1 and word_count < 25:
+        # Default is Tier 2, but downgrade to Tier 1 if extremely short, simple, and has no conditionals
+        if score <= 1 and word_count < 25 and not has_conditionals:
             logger.info("Task classified as SIMPLE reasoning (score=%d), downgrading to Tier 1", score)
             return 1
         return 2
 
-    if category in ("factual_knowledge", "text_summarization", "ner", "sentiment_classification"):
-        # Default is Tier 1, but escalate to Tier 2 if extremely long or complex
-        if score >= 4:
+    if category in ("factual_knowledge", "text_summarization", "ner"):
+        # Default is Tier 1, but escalate to Tier 2 if extremely long, complex, or conditional-heavy
+        if score >= 4 or (has_conditionals and word_count > 50):
             logger.info("Task classified as COMPLEX context (score=%d), escalating to Tier 2", score)
             return 2
         return 1
 
     return 1
+
+
+def _normalize_json_string(text: str) -> str:
+    """Strips markdown code block wrappers from JSON output if present."""
+    import re
+    cleaned = text.strip()
+    match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", cleaned, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return cleaned
+
+
+def _is_valid_tier_one_response(answer: str, category: str) -> bool:
+    """Validate output of Tier 1 using heuristics to decide if escalation is required."""
+    if not answer or len(answer.strip()) == 0:
+        return False
+
+    cleaned = answer.strip()
+    import json
+
+    # 1. Detection of failure/apology phrases
+    apologies = [
+        "i do not know", "i cannot answer", "i'm sorry", "sorry, but",
+        "i am unable to", "as an ai", "could not determine", "api error"
+    ]
+    if any(apology in cleaned.lower() for apology in apologies):
+        logger.warning("Tier 1 output contains apology/failure indicator. Escalating...")
+        return False
+
+    # 2. Sentiment validation (must be POS, NEG, or NEU)
+    if category == "sentiment_classification":
+        import re
+        label = re.sub(r"[^a-zA-Z]", "", cleaned).upper()
+        if label not in ("POS", "NEG", "NEU"):
+            logger.warning("Tier 1 sentiment '%s' is invalid. Escalating...", cleaned)
+            return False
+
+    # 3. Named Entity Recognition validation (must be JSON parseable)
+    if category in ("ner", "named_entity_recognition"):
+        normalized = _normalize_json_string(cleaned)
+        try:
+            json.loads(normalized)
+        except Exception:
+            logger.warning("Tier 1 NER output is not valid JSON. Escalating...")
+            return False
+
+    # 4. Fallback math tasks
+    if category in ("math", "mathematical_reasoning"):
+        if len(cleaned.split()) > 20:
+            logger.warning("Tier 1 math output is too verbose. Escalating...")
+            return False
+
+    return True
 
 
 def route_task(
@@ -168,8 +231,8 @@ def route_task(
         target_tier = fallback_tier
         # Setup fallback prompt config
         cat_config = {
-            "system_prompt": "Solve this math problem. Give only the final answer.",
-            "max_tokens": cat_config.get("max_tokens", 150),
+            "system_prompt": "Solve this and output only the final numerical answer.",
+            "max_tokens": cat_config.get("max_tokens", 50),
             "temperature": 0.0,
         }
     else:
@@ -198,7 +261,11 @@ def route_task(
                 category_config=cat_config,
                 task_id=task_id,
             )
-            if answer:
+            # FrugalGPT Cascade validation: escalate if output is invalid
+            if answer and _is_valid_tier_one_response(answer, normalized_cat):
+                # Ensure NER is returned as clean normalized JSON string
+                if normalized_cat in ("ner", "named_entity_recognition"):
+                    answer = _normalize_json_string(answer)
                 return answer
         except Exception as e:
             logger.warning("Tier 1 failed for task %s: %s", task_id, e)
@@ -220,6 +287,9 @@ def route_task(
                 task_id=task_id,
             )
             if answer:
+                # Ensure NER JSON is normalized even from Tier 2
+                if normalized_cat in ("ner", "named_entity_recognition"):
+                    answer = _normalize_json_string(answer)
                 return answer
         except Exception as e:
             logger.error("Tier 2 failed for task %s: %s", task_id, e)

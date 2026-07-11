@@ -143,20 +143,20 @@ class Config:
 CATEGORY_CONFIG = {
     "factual_knowledge": {
         "tier": 1,
-        "system_prompt": "Fact only. Concise.",
+        "system_prompt": "Answer factually and concisely. No explanations.",
         "max_tokens": 200,
         "temperature": 0.1,
     },
     "math": {
         "tier": 0,  # Zero-cost: Python execution
-        "system_prompt": "",  # Not used for Tier 0
-        "max_tokens": 150,
+        "system_prompt": "Solve this and output only the final numerical answer.",
+        "max_tokens": 50,
         "temperature": 0.0,
     },
     "mathematical_reasoning": {
         "tier": 0,
-        "system_prompt": "",
-        "max_tokens": 150,
+        "system_prompt": "Solve this and output only the final numerical answer.",
+        "max_tokens": 50,
         "temperature": 0.0,
     },
     "sentiment_classification": {
@@ -167,44 +167,44 @@ CATEGORY_CONFIG = {
     },
     "text_summarization": {
         "tier": 1,
-        "system_prompt": "Summarize.",
+        "system_prompt": "Summarize this text concisely.",
         "max_tokens": 300,
-        "temperature": 0.2,
+        "temperature": 0.3,
     },
     "ner": {
         "tier": 1,
-        "system_prompt": "Extract entities (Person, Org, Loc). format: Entity (Type).",
-        "max_tokens": 200,
+        "system_prompt": "Extract named entities as JSON.",
+        "max_tokens": 150,
         "temperature": 0.0,
     },
     "named_entity_recognition": {
         "tier": 1,
-        "system_prompt": "Extract entities (Person, Org, Loc). format: Entity (Type).",
-        "max_tokens": 200,
+        "system_prompt": "Extract named entities as JSON.",
+        "max_tokens": 150,
         "temperature": 0.0,
     },
     "code_debugging": {
         "tier": 2,
-        "system_prompt": "Fix bug. Output corrected code only. No explanations.",
+        "system_prompt": "Fix this code. Output only the corrected code.",
         "max_tokens": 500,
         "temperature": 0.1,
     },
     "logical_reasoning": {
         "tier": 2,
-        "system_prompt": "Reason step-by-step. Give final answer.",
-        "max_tokens": 400,
+        "system_prompt": "Solve step-by-step, ending with the final conclusion.",
+        "max_tokens": 500,
         "temperature": 0.1,
     },
     "deductive_reasoning": {
         "tier": 2,
-        "system_prompt": "Reason step-by-step. Give final answer.",
-        "max_tokens": 400,
+        "system_prompt": "Solve step-by-step, ending with the final conclusion.",
+        "max_tokens": 500,
         "temperature": 0.1,
     },
     "code_generation": {
         "tier": 2,  # Code gen needs quality - use large model directly
-        "system_prompt": "Code only. No explanations.",
-        "max_tokens": 600,
+        "system_prompt": "Write code to solve this. No explanations.",
+        "max_tokens": 500,
         "temperature": 0.1,
     },
 }

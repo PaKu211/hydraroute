@@ -99,36 +99,9 @@ class InMemoryCache:
                 return cached_answer
 
         # 2. Fuzzy Semantic Check (Cosine Similarity on Bag-of-Words)
-        input_tokens = self._tokenize(instruction)
-        if not input_tokens:
-            with self._cache_lock:
-                self._misses += 1
-            return None
-
+        # Disabled to protect Accuracy Gate from false positive hits (e.g. math numbers or different names)
+        # We still tokenize to maintain metrics/structure, but we do not perform fuzzy cache retrieval.
         with self._cache_lock:
-            best_similarity = 0.0
-            best_answer: Optional[str] = None
-            best_matched_text: str = ""
-
-            # Scan cache items belonging to the SAME category to prevent mismatches
-            for item in self._fuzzy_cache:
-                if item["category"] != category:
-                    continue
-
-                sim = self._cosine_similarity(input_tokens, item["tokens"])
-                if sim > best_similarity:
-                    best_similarity = sim
-                    best_answer = item["answer"]
-                    best_matched_text = item["raw"]
-
-            if best_similarity >= SIMILARITY_THRESHOLD and best_answer is not None:
-                self._fuzzy_hits += 1
-                logger.info(
-                    "Fuzzy Cache HIT (Similarity: %.2f) for category [%s]. Matched: '%s...'",
-                    best_similarity, category, best_matched_text[:40]
-                )
-                return best_answer
-
             self._misses += 1
             return None
 
