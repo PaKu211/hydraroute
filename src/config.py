@@ -124,7 +124,7 @@ class Config:
 CATEGORY_CONFIG = {
     "factual_knowledge": {
         "tier": 1,
-        "system_prompt": "Answer factually and concisely.",
+        "system_prompt": "Fact only. Concise.",
         "max_tokens": 200,
         "temperature": 0.1,
     },
@@ -148,43 +148,43 @@ CATEGORY_CONFIG = {
     },
     "text_summarization": {
         "tier": 1,
-        "system_prompt": "Summarize concisely.",
+        "system_prompt": "Summarize.",
         "max_tokens": 300,
         "temperature": 0.2,
     },
     "ner": {
         "tier": 1,
-        "system_prompt": "Extract all named entities. List each entity and its type.",
+        "system_prompt": "Extract entities (Person, Org, Loc). format: Entity (Type).",
         "max_tokens": 200,
         "temperature": 0.0,
     },
     "named_entity_recognition": {
         "tier": 1,
-        "system_prompt": "Extract all named entities. List each entity and its type.",
+        "system_prompt": "Extract entities (Person, Org, Loc). format: Entity (Type).",
         "max_tokens": 200,
         "temperature": 0.0,
     },
     "code_debugging": {
         "tier": 2,
-        "system_prompt": "Debug the code. Identify the bug and provide the corrected code.",
+        "system_prompt": "Fix bug. Output corrected code only. No explanations.",
         "max_tokens": 500,
         "temperature": 0.1,
     },
     "logical_reasoning": {
         "tier": 2,
-        "system_prompt": "Reason step by step and provide the answer.",
+        "system_prompt": "Reason step-by-step. Give final answer.",
         "max_tokens": 400,
         "temperature": 0.1,
     },
     "deductive_reasoning": {
         "tier": 2,
-        "system_prompt": "Reason step by step and provide the answer.",
+        "system_prompt": "Reason step-by-step. Give final answer.",
         "max_tokens": 400,
         "temperature": 0.1,
     },
     "code_generation": {
         "tier": 2,  # Code gen needs quality - use large model directly
-        "system_prompt": "Write concise, correct code only. No explanations.",
+        "system_prompt": "Code only. No explanations.",
         "max_tokens": 600,
         "temperature": 0.1,
     },
