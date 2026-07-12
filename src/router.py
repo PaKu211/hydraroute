@@ -87,18 +87,40 @@ def estimate_difficulty(instruction: str, category: str) -> int:
 
     # Indicators of high logical/debugging complexity
     complex_indicators = [
-        "debug", "fix the bug", "traceback", "runtimeerror", "syntaxerror",
-        "logical puzzle", "explain step by step", "prove", "mathematical proof",
-        "write a class", "implement a complex", "algorithm", "recursive", "concurrency",
-        "nested", "complex", "o(n", "space complexity"
+        "debug",
+        "fix the bug",
+        "traceback",
+        "runtimeerror",
+        "syntaxerror",
+        "logical puzzle",
+        "explain step by step",
+        "prove",
+        "mathematical proof",
+        "write a class",
+        "implement a complex",
+        "algorithm",
+        "recursive",
+        "concurrency",
+        "nested",
+        "complex",
+        "o(n",
+        "space complexity",
     ]
     has_indicators = any(ind in text for ind in complex_indicators)
 
     # Coding structural characters (indicates code block analysis)
-    has_code_structure = "```" in text or "def " in text or "class " in text or "import " in text
+    has_code_structure = (
+        "```" in text or "def " in text or "class " in text or "import " in text
+    )
 
     # Ambiguity and conditional logic clauses (indicates high reasoning difficulty)
-    conditional_keywords = ["unless", "except when", "only if", "provided that", "otherwise"]
+    conditional_keywords = [
+        "unless",
+        "except when",
+        "only if",
+        "provided that",
+        "otherwise",
+    ]
     has_conditionals = any(cond in text for cond in conditional_keywords)
 
     # Score calculation
@@ -119,14 +141,20 @@ def estimate_difficulty(instruction: str, category: str) -> int:
     if category in ("code_generation", "code_debugging", "logical_reasoning"):
         # Default is Tier 2, but downgrade to Tier 1 if extremely short, simple, and has no conditionals
         if score <= 1 and word_count < 25 and not has_conditionals:
-            logger.info("Task classified as SIMPLE reasoning (score=%d), downgrading to Tier 1", score)
+            logger.info(
+                "Task classified as SIMPLE reasoning (score=%d), downgrading to Tier 1",
+                score,
+            )
             return 1
         return 2
 
     if category in ("factual_knowledge", "text_summarization", "ner"):
         # Default is Tier 1, but escalate to Tier 2 if extremely long, complex, or conditional-heavy
         if score >= 4 or (has_conditionals and word_count > 50):
-            logger.info("Task classified as COMPLEX context (score=%d), escalating to Tier 2", score)
+            logger.info(
+                "Task classified as COMPLEX context (score=%d), escalating to Tier 2",
+                score,
+            )
             return 2
         return 1
 
@@ -172,16 +200,25 @@ def _is_valid_tier_one_response(answer: str, category: str) -> bool:
 
     # 1. Detection of failure/apology phrases
     apologies = [
-        "i do not know", "i cannot answer", "i'm sorry", "sorry, but",
-        "i am unable to", "as an ai", "could not determine", "api error"
+        "i do not know",
+        "i cannot answer",
+        "i'm sorry",
+        "sorry, but",
+        "i am unable to",
+        "as an ai",
+        "could not determine",
+        "api error",
     ]
     if any(apology in cleaned.lower() for apology in apologies):
-        logger.warning("Tier 1 output contains apology/failure indicator. Escalating...")
+        logger.warning(
+            "Tier 1 output contains apology/failure indicator. Escalating..."
+        )
         return False
 
     # 2. Sentiment validation (must be POS, NEG, or NEU)
     if category == "sentiment_classification":
         import re
+
         label = re.sub(r"[^a-zA-Z]", "", cleaned).upper()
         if label not in ("POS", "NEG", "NEU"):
             logger.warning("Tier 1 sentiment '%s' is invalid. Escalating...", cleaned)
@@ -219,8 +256,11 @@ def route_task(
 ) -> str:
     """Route a single task to the appropriate tier and return the answer.
 
-    Implements fallback chain:
-        Tier 0 (local) -> Tier 1 (small model) -> Tier 2 (large model)
+    Implements zero-token-first fallback chain:
+        Tier 0 (local solvers) -> Tier 1 (small model) -> Tier 2 (large model)
+
+    Always attempts Tier 0 first regardless of category (zero token cost).
+    Falls back to dynamic heuristic difficulty estimation for API tiers.
 
     Args:
         task: Task dict with task_id, category, instruction.
@@ -236,52 +276,42 @@ def route_task(
 
     normalized_cat = normalize_category(category)
     cat_config = get_category_config(normalized_cat)
-    config_tier = cat_config.get("tier", 1)
 
-    # 1. Math tasks go to Tier 0 (local execution)
-    if config_tier == 0:
-        logger.info("Routing task %s [%s] -> Tier 0 (Local Math Solver)", task_id, category)
-        try:
-            answer = tier_zero.execute(instruction)
-            if answer is not None:
-                TokenTracker().record_tier_zero()
-                logger.info("Task %s solved by Tier 0", task_id)
-                return answer
-        except Exception as e:
-            logger.warning("Tier 0 failed for task %s: %s", task_id, e)
+    # ── Step 0: Always try Tier 0 first (zero token cost) ──
+    logger.info("Routing task %s [%s] -> Tier 0 (Local Solvers)", task_id, category)
+    try:
+        answer = tier_zero.execute(instruction)
+        if answer is not None:
+            TokenTracker().record_tier_zero()
+            logger.info("Task %s solved by Tier 0", task_id)
+            return answer
+    except Exception as e:
+        logger.warning("Tier 0 failed for task %s: %s", task_id, e)
 
-        # Fallback: Tier 0 -> Tier 1 (or Tier 2 if overall difficulty is high)
-        logger.info("Tier 0 fallback initiated for task %s", task_id)
-        # Check difficulty of the math problem for API fallback
-        fallback_tier = estimate_difficulty(instruction, normalized_cat)
-        target_tier = fallback_tier
-        # Setup fallback prompt config
-        cat_config = {
-            "system_prompt": "Solve this and output only the final numerical answer.",
-            "max_tokens": cat_config.get("max_tokens", 150),
-            "temperature": 0.0,
-        }
-    else:
-        # 2. Non-math tasks: Dynamically determine tier using Heuristic Difficulty Estimator
-        target_tier = estimate_difficulty(instruction, normalized_cat)
-        logger.info("Routing task %s [%s] -> Tier %d (Estimated)", task_id, category, target_tier)
+    # ── Step 1: Estimate difficulty for API tier selection ──
+    target_tier = estimate_difficulty(instruction, normalized_cat)
+    logger.info(
+        "Routing task %s [%s] -> Tier %d (Estimated)", task_id, category, target_tier
+    )
 
-    answer: str | None = None
+    answer = None
 
-    # Apply prompt compression for API calls (Tier 1 & Tier 2) to save input tokens
+    # Apply prompt compression for API calls (Tier 1 & Tier 2)
     try:
         from src.compression import PromptCompressor
+
         instruction_optimized = PromptCompressor().optimize(instruction, normalized_cat)
     except Exception as e:
         logger.warning("Prompt compression failed: %s", e)
         instruction_optimized = instruction
 
-    # ── Tier 1: Small model ──
-    if target_tier <= 1 and config.small_model:
+    # ── Tier 1: Category-appropriate model ──
+    tier1_model = config.get_model_for_category(normalized_cat)
+    if target_tier <= 1 and tier1_model:
         try:
             answer = tier_one.execute(
                 client=client,
-                model=config.small_model,
+                model=tier1_model,
                 instruction=instruction_optimized,
                 category=category,
                 category_config=cat_config,
@@ -289,20 +319,16 @@ def route_task(
             )
             # FrugalGPT Cascade validation: escalate if output is invalid
             if answer and _is_valid_tier_one_response(answer, normalized_cat):
-                # Ensure NER is returned as clean normalized JSON string
                 if normalized_cat in ("ner", "named_entity_recognition"):
                     answer = _normalize_json_string(answer)
                 return answer
         except Exception as e:
             logger.warning("Tier 1 failed for task %s: %s", task_id, e)
-
-        # Fallback: Tier 1 -> Tier 2
         logger.info("Tier 1 fallback -> Tier 2 for task %s", task_id)
 
-    # ── Tier 2: Large model ──
+    # ── Tier 2: Large model (category-preferred or fallback) ──
     if config.large_model:
         try:
-            # Use original category config parameters for the Tier 2 execution
             t2_config = CATEGORY_CONFIG.get(normalized_cat, cat_config)
             answer = tier_two.execute(
                 client=client,
@@ -313,13 +339,11 @@ def route_task(
                 task_id=task_id,
             )
             if answer:
-                # Ensure NER JSON is normalized even from Tier 2
                 if normalized_cat in ("ner", "named_entity_recognition"):
                     answer = _normalize_json_string(answer)
                 return answer
         except Exception as e:
             logger.error("Tier 2 failed for task %s: %s", task_id, e)
 
-    # ── All tiers exhausted ──
     logger.error("All tiers failed for task %s", task_id)
     return "I could not determine the answer."
