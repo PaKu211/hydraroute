@@ -60,11 +60,6 @@ def execute(
                 "truncate"
             )
 
-            # OpenRouter-specific: verbose output suppression + reasoning exclusion
-            params.setdefault("extra_body", {})["verbosity"] = "low"
-            if any(m in model_lower for m in ["gemma"]):
-                params["extra_body"]["reasoning"] = {"exclude": True}
-
             # Disable thinking for reasoning models (saves reasoning tokens)
             if any(m in model_lower for m in ["deepseek", "qwen"]):
                 params.setdefault("extra_body", {})["thinking"] = {"type": "disabled"}
@@ -78,10 +73,18 @@ def execute(
                 if not reasoning and hasattr(msg, "model_extra") and msg.model_extra:
                     reasoning = msg.model_extra.get("reasoning_content")
                 if reasoning:
-                    answer = reasoning.strip()
-                    logger.info(
-                        "Using reasoning_content as fallback for task %s", task_id
-                    )
+                    answer = reasoning
+
+            # Strip Gemma 4's empty thinking tags (<|channel|>...) before any processing
+            if answer:
+                answer = re.sub(r"<\|channel\|?>?\s*.*?\n?", "", answer).strip()
+                answer = re.sub(r"<\|thought\|?>?\s*.*?\n?", "", answer).strip()
+
+            if category in ("ner", "named_entity_recognition") and answer:
+                cleaned = answer.strip()
+                match = re.search(r"(\{.*\}|\[.*\])", cleaned, re.DOTALL)
+                if match:
+                    answer = match.group(1)
 
             if answer:
                 answer = answer.strip()
