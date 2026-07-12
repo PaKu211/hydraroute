@@ -307,23 +307,78 @@ def route_task(
 
     # ── Tier 1: Category-appropriate model ──
     tier1_model = config.get_model_for_category(normalized_cat)
+    is_same_model_fallback = False
+
     if target_tier <= 1 and tier1_model:
+        # Self-Consistency Majority Voting for reasoning tasks (3 parallel calls)
+        if normalized_cat in ("logical_reasoning", "deductive_reasoning"):
+            import concurrent.futures
+
+            def _single_call() -> str | None:
+                return tier_one.execute(
+                    client=client,
+                    model=tier1_model,
+                    instruction=instruction_optimized,
+                    category=category,
+                    category_config=cat_config,
+                    task_id=task_id,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                futures = [pool.submit(_single_call) for _ in range(3)]
+                votes: list[str] = []
+                for f in futures:
+                    try:
+                        r = f.result(timeout=20)
+                        if r:
+                            votes.append(r.strip())
+                    except Exception:
+                        continue
+
+            if len(votes) >= 2:
+                from collections import Counter
+
+                counter = Counter(votes)
+                top_answer, top_count = counter.most_common(1)[0]
+                if top_count >= 2:
+                    logger.info(
+                        "Task %s: Self-consistency consensus (%d/3) -> '%s'",
+                        task_id,
+                        top_count,
+                        top_answer[:80],
+                    )
+                    return top_answer
+                elif len(votes) == 3:
+                    logger.info(
+                        "Task %s: No consensus (all differ), using first: '%s'",
+                        task_id,
+                        votes[0][:80],
+                    )
+                    answer = votes[0]
+                else:
+                    answer = None
+            else:
+                answer = None
+        else:
+            answer = None
+
+        # Normal single-call path
         try:
-            answer = tier_one.execute(
-                client=client,
-                model=tier1_model,
-                instruction=instruction_optimized,
-                category=category,
-                category_config=cat_config,
-                task_id=task_id,
-            )
-            # FrugalGPT Cascade validation: escalate if output is invalid
+            if answer is None:
+                answer = tier_one.execute(
+                    client=client,
+                    model=tier1_model,
+                    instruction=instruction_optimized,
+                    category=category,
+                    category_config=cat_config,
+                    task_id=task_id,
+                )
+
             if answer and _is_valid_tier_one_response(answer, normalized_cat):
                 if normalized_cat in ("ner", "named_entity_recognition"):
                     answer = _normalize_json_string(answer)
 
-                # TERA-inspired 1-Token YES/NO judge: self-verify logical correctness
-                # Only fire for reasoning-intensive categories where correctness is critical
+                # TERA-inspired 1-Token YES/NO judge
                 if normalized_cat in (
                     "logical_reasoning",
                     "deductive_reasoning",
@@ -359,16 +414,12 @@ def route_task(
                         )
                         if not verdict.startswith("YES"):
                             logger.info(
-                                "Task %s: Tier 1 self-judge returned '%s', escalating to Tier 2",
-                                task_id,
-                                verdict,
+                                "Task %s: Self-judge '%s', escalating", task_id, verdict
                             )
-                            answer = None  # Force escalation to Tier 2
-                        else:
-                            logger.debug("Task %s: Tier 1 self-judge passed", task_id)
+                            answer = None
                     except Exception as judge_e:
                         logger.warning(
-                            "Task %s: Judge call failed (%s), accepting Tier 1 answer",
+                            "Task %s: Judge failed (%s), accepting answer",
                             task_id,
                             judge_e,
                         )
@@ -377,12 +428,30 @@ def route_task(
                     return answer
         except Exception as e:
             logger.warning("Tier 1 failed for task %s: %s", task_id, e)
+
         logger.info("Tier 1 fallback -> Tier 2 for task %s", task_id)
+        is_same_model_fallback = tier1_model == config.large_model
 
     # ── Tier 2: Large model (category-preferred or fallback) ──
     if config.large_model:
         try:
             t2_config = CATEGORY_CONFIG.get(normalized_cat, cat_config)
+
+            # Temperature scaling + prompt mutation for same-model fallback
+            if is_same_model_fallback:
+                mutated_config = dict(t2_config)
+                mutated_config["temperature"] = 0.3
+                mutated_system = mutated_config.get(
+                    "system_prompt",
+                    "Provide a correct answer.",
+                )
+                mutated_config["system_prompt"] = (
+                    f"{mutated_system} CRITICAL: Your previous attempt was invalid. "
+                    f"Respond with a completely different approach. "
+                    f"Ensure all required formatting (JSON, labels, etc.) is correct."
+                )
+                t2_config = mutated_config
+
             answer = tier_two.execute(
                 client=client,
                 model=config.large_model,

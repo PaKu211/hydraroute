@@ -6,7 +6,7 @@ Optimized for simple tasks: factual knowledge, sentiment, NER, summarization.
 Features:
 - Per-category model selection from Config.get_model_for_category()
 - Prompt caching support (no seed randomization to maximize cache hits)
-- Reasoning suppression for non-reasoning models
+- Reasoning suppression via extra_body for DeepSeek/Qwen models
 """
 
 import logging
@@ -63,13 +63,6 @@ def execute(
             # Disable thinking for reasoning models (saves reasoning tokens)
             if any(m in model_lower for m in ["deepseek", "qwen"]):
                 params.setdefault("extra_body", {})["thinking"] = {"type": "disabled"}
-
-            # Set reasoning_effort=none for non-reasoning tasks
-            is_reasoning_task = any(
-                kw in category.lower() for kw in ["reason", "debug", "code", "logic"]
-            )
-            if not is_reasoning_task:
-                params["reasoning_effort"] = "none"
 
             response = client.chat.completions.create(**params)
 

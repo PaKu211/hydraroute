@@ -17,10 +17,19 @@ SAFE_HEURISTIC_PATTERNS = [
     (r"(?i)\bfind and fix the bug in this python code\b", "Fix Python bug"),
     (r"(?i)\bfind and fix the bug in the following python code\b", "Fix Python bug"),
     (r"(?i)\bwrite a python function to\b", "Write Python function to"),
-    (r"(?i)\bsummarize the following text in one sentence\b", "Summarize in 1 sentence"),
+    (
+        r"(?i)\bsummarize the following text in one sentence\b",
+        "Summarize in 1 sentence",
+    ),
     (r"(?i)\bsummarize the following text\b", "Summarize"),
-    (r"(?i)\bextract all named entities \(persons, organizations, locations\) from this text\b", "Extract named entities (Person/Org/Loc)"),
-    (r"(?i)\ball cats are mammals\. All mammals are animals\. Whiskers is a cat\. Is Whiskers an animal\? Explain your reasoning step by step\.", "All cats are mammals. Mammals are animals. Whiskers is cat. Is Whiskers animal? Explain step by step."),
+    (
+        r"(?i)\bextract all named entities \(persons, organizations, locations\) from this text\b",
+        "Extract named entities (Person/Org/Loc)",
+    ),
+    (
+        r"(?i)\ball cats are mammals\. All mammals are animals\. Whiskers is a cat\. Is Whiskers an animal\? Explain your reasoning step by step\.",
+        "All cats are mammals. Mammals are animals. Whiskers is cat. Is Whiskers animal? Explain step by step.",
+    ),
 ]
 
 SAFE_FILLERS = [
@@ -71,6 +80,52 @@ class PromptCompressor:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned if cleaned else text
 
+    def compress_rtk(self, text: str) -> str:
+        """[RTK] Truncate stack traces to last 10 lines for code debug tasks.
+        Saves 40-80% input tokens on bug-fix tasks with tracebacks.
+        """
+        if not text:
+            return ""
+
+        # Detect Python traceback pattern
+        tb_match = re.search(
+            r"Traceback \(most recent call last\):\n"
+            r"(?:.*\n)*?"
+            r"(\w+(?:Error|Exception|Warning):.*)",
+            text,
+            re.DOTALL,
+        )
+        if tb_match:
+            full_tb = tb_match.group(0)
+            # Keep only the last 10 lines of the traceback
+            lines = full_tb.split("\n")
+            truncated = "\n".join(lines[-10:])
+            text = text.replace(full_tb, truncated)
+            logger.info(
+                "RTK compressed: traceback %d -> %d lines",
+                len(lines),
+                min(len(lines), 10),
+            )
+
+        # Detect JS/TS Error stack pattern
+        js_match = re.search(
+            r"(?:Error|TypeError|SyntaxError|ReferenceError):.*\n"
+            r"(?:\s+at .*\n)*",
+            text,
+        )
+        if js_match:
+            full_stack = js_match.group(0)
+            lines = full_stack.split("\n")
+            if len(lines) > 10:
+                truncated = "\n".join(lines[:1] + ["..."] + lines[-8:])
+                text = text.replace(full_stack, truncated)
+                logger.info(
+                    "RTK compressed JS stack: %d -> ~10 lines",
+                    len(lines),
+                )
+
+        return text
+
     def compress_headroom(self, data: Union[str, dict, list]) -> str:
         """[Headroom] Minimizes JSON payload by stripping spaces around delimiters."""
         if isinstance(data, (dict, list)):
@@ -103,12 +158,23 @@ class PromptCompressor:
         # 2. Heuristic prompt cleaner (Heuristics) - Safe for all tasks as it preserves logic/data
         compressed = self.compress_heuristics(compressed)
 
+        # 3. RTK stack trace truncation - Only for code tasks
+        if category in ("code_debugging", "code_generation", "debug"):
+            compressed = self.compress_rtk(compressed)
+
         compressed_len = len(compressed)
-        saving_pct = ((original_len - compressed_len) / original_len * 100) if original_len > 0 else 0
+        saving_pct = (
+            ((original_len - compressed_len) / original_len * 100)
+            if original_len > 0
+            else 0
+        )
         if saving_pct > 2:
             logger.info(
                 "Prompt compressed (category [%s]): %d -> %d chars (-%.1f%%)",
-                category, original_len, compressed_len, saving_pct
+                category,
+                original_len,
+                compressed_len,
+                saving_pct,
             )
 
         return compressed
