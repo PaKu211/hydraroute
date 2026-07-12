@@ -68,7 +68,9 @@ def _try_arithmetic(text: str) -> str | None:
 
     expr_match = re.search(r"([\d][\d\s\+\-\*/\.\(\)%]+[\d\)])", cleaned)
     if expr_match:
-        return _safe_eval(expr_match.group(1).strip())
+        expr = expr_match.group(1).strip()
+        if any(op in expr for op in "+-*/"):
+            return _safe_eval(expr)
     if SAFE_EVAL_PATTERN.match(cleaned) and cleaned:
         return _safe_eval(cleaned)
     return None
@@ -323,7 +325,7 @@ def _try_date_math(text: str) -> str | None:
     if m:
         amount = int(m.group(1))
         unit = m.group(2).lower()
-        date_str = m.group(3).strip().rstrip("?.,! ")
+        date_str = m.group(4).strip().rstrip("?.,! ")
         base_date = _parse_date(date_str)
         if base_date is None:
             return None
@@ -468,7 +470,8 @@ _CONVERSIONS: dict[tuple[str, str], callable] = {}
 
 def _reg_conv(fr: str, to: str, fn: callable):
     _CONVERSIONS[(fr, to)] = fn
-    _CONVERSIONS[(to, fr)] = lambda x: 1.0 / fn(x) if fn(x) != 0 else 0
+    if (to, fr) not in _CONVERSIONS:
+        _CONVERSIONS[(to, fr)] = lambda x: 1.0 / fn(x) if fn(x) != 0 else 0
 
 
 # Length
