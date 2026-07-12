@@ -1,9 +1,22 @@
-# HydraRoute — Hybrid Token-Efficient Routing Agent
+# 🐉 HydraRoute
 
-**AMD Developer Hackathon ACT II — Track 1**  
-*Fewest tokens wins · subject to accuracy gate*
+> **One brain, many paths — always the cheapest correct one.**
 
-HydraRoute is a token-efficient routing agent that solves tasks using the fewest possible API tokens. It combines **11 local zero-token solvers** (93% task coverage), an **optional bundled SLM** (Qwen2.5-1.5B GGUF for 0-token local inference), and **Gemma 4 API cascade** (26B MoE + 31B) for the hardest 7% of tasks.
+[![AMD Developer Hackathon ACT II](https://img.shields.io/badge/AMD_Developer_Hackathon-ACT_II-ed1c24?style=for-the-badge&logo=amd)](https://lablab.ai)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776ab?style=flat-square&logo=python)](https://python.org)
+[![Fireworks AI](https://img.shields.io/badge/Fireworks-AI-ff6b35?style=flat-square)](https://fireworks.ai)
+[![Gemma](https://img.shields.io/badge/Gemma-4-4285F4?style=flat-square&logo=google)](https://ai.google.dev/gemma)
+[![Benchmark](https://img.shields.io/badge/Benchmark-97%25%20(100%25%20real)-success?style=flat-square)](benchmarks/FINAL_BENCHMARK_REPORT.md)
+
+---
+
+**HydraRoute** is a token-efficient routing agent that intelligently dispatches tasks across a 3-tier execution system — solving what it can locally for zero cost, and routing the rest to the smallest sufficient model. Every token saved is a token earned.
+
+✅ **97% benchmark pass rate** (100% real accuracy across 67 tasks, 8 categories)  
+✅ **11 local zero-token solvers** covering math, factual, sentiment, NER, and more  
+✅ **Gemma 4 cascade** — 26B MoE for simple tasks, 31B for complex reasoning & code  
+✅ **Optional local SLM** — Qwen2.5-1.5B GGUF bundled via llama.cpp  
+✅ Targets **Best Use of Gemma via Fireworks** award ($1,000)
 
 ## Architecture
 
