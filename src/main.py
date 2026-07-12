@@ -123,9 +123,7 @@ def process_tasks_concurrent(
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_idx = {
-            executor.submit(
-                process_single_task, task, config, client, i + 1, total
-            ): i
+            executor.submit(process_single_task, task, config, client, i + 1, total): i
             for i, task in enumerate(tasks)
         }
 
@@ -165,6 +163,44 @@ def process_tasks_sequential(
     ]
 
 
+def model_health_check(
+    config: Config,
+    client: OpenAI,
+) -> None:
+    """Validate all models in the allowed list by sending a minimal probe request.
+    Removes models that return errors (offline, wrong ID, auth issues).
+    Logs warnings for each failed model and updates config.allowed_models.
+    """
+    logger = logging.getLogger("hydraroute")
+    healthy: list[str] = []
+
+    for model in config.allowed_models:
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                temperature=0.0,
+            )
+            if resp.choices and resp.choices[0].message.content is not None:
+                healthy.append(model)
+                logger.info("Health check PASS: %s", model.split("/")[-1])
+            else:
+                logger.warning("Health check FAIL (empty response): %s", model)
+        except Exception as e:
+            logger.warning("Health check FAIL: %s — %s", model.split("/")[-1], e)
+
+    removed = len(config.allowed_models) - len(healthy)
+    if removed:
+        logger.warning(
+            "Removed %d unhealthy model(s). Healthy: %d",
+            removed,
+            len(healthy),
+        )
+    config.allowed_models = healthy
+    config._assign_model_tiers()
+
+
 def main() -> None:
     """Run the HydraRoute agent pipeline."""
     setup_logging()
@@ -200,7 +236,14 @@ def main() -> None:
     # ── 3. Create API client ──
     client = create_client(config)
 
-    # ── 4. Load tasks ──
+    # ── 4. Model health check: validate each model at startup ──
+    if config.allowed_models:
+        logger.info(
+            "Running model health check on %d model(s)...", len(config.allowed_models)
+        )
+        model_health_check(config, client)
+
+    # ── 5. Load tasks ──
     tasks = load_tasks(config.input_path)
     if not tasks:
         logger.warning("No tasks loaded — writing empty results")
@@ -226,15 +269,21 @@ def main() -> None:
     dedup_saved = len(tasks) - len(unique_tasks)
     logger.info(
         "Loaded %d tasks. Pre-deduplicated down to %d unique tasks (%d duplicate(s) bypassed).",
-        len(tasks), len(unique_tasks), dedup_saved
+        len(tasks),
+        len(unique_tasks),
+        dedup_saved,
     )
 
-    logger.info("Processing %d unique tasks (concurrent, max 3 workers)", len(unique_tasks))
+    logger.info(
+        "Processing %d unique tasks (concurrent, max 3 workers)", len(unique_tasks)
+    )
 
-    # ── 5. Process unique tasks with concurrency ──
+    # ── 6. Process unique tasks with concurrency ──
     try:
         unique_results = process_tasks_concurrent(
-            unique_tasks, config, client,
+            unique_tasks,
+            config,
+            client,
             max_workers=3,
             per_task_timeout=25.0,
         )
@@ -251,13 +300,12 @@ def main() -> None:
         key = f"{cat}:{inst}"
         # Fetch answer from representative unique task
         rep_task_id = dup_map[key][0]
-        answer = unique_results_map.get(rep_task_id, "I could not determine the answer.")
-        results.append({
-            "task_id": task["task_id"],
-            "answer": answer
-        })
+        answer = unique_results_map.get(
+            rep_task_id, "I could not determine the answer."
+        )
+        results.append({"task_id": task["task_id"], "answer": answer})
 
-    # ── 6. Save results ──
+    # ── 7. Save results ──
     save_results(results, config.output_path)
 
     # ── 7. Print summaries ──

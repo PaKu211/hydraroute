@@ -58,6 +58,11 @@ def execute(
                 "temperature": temperature,
             }
 
+            # Context overflow protection: truncate instead of error
+            params.setdefault("extra_body", {})["context_length_exceeded_behavior"] = (
+                "truncate"
+            )
+
             # Disable thinking for reasoning models (saves reasoning tokens)
             if any(m in model_lower for m in ["deepseek", "qwen", "r1"]):
                 params.setdefault("extra_body", {})["thinking"] = {"type": "disabled"}

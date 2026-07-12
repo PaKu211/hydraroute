@@ -321,7 +321,60 @@ def route_task(
             if answer and _is_valid_tier_one_response(answer, normalized_cat):
                 if normalized_cat in ("ner", "named_entity_recognition"):
                     answer = _normalize_json_string(answer)
-                return answer
+
+                # TERA-inspired 1-Token YES/NO judge: self-verify logical correctness
+                # Only fire for reasoning-intensive categories where correctness is critical
+                if normalized_cat in (
+                    "logical_reasoning",
+                    "deductive_reasoning",
+                    "code_debugging",
+                    "code_generation",
+                ):
+                    from src.config import CACHE_PREFIX
+
+                    judge_prompt = (
+                        f"Does this answer logically solve the prompt? "
+                        f"Reply only YES or NO.\n\n"
+                        f"Prompt: {instruction}\n\n"
+                        f"Answer: {answer}"
+                    )
+                    try:
+                        judge_resp = client.chat.completions.create(
+                            model=tier1_model,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": f"{CACHE_PREFIX} | judge | Validate correctness. Reply only YES or NO.",
+                                },
+                                {"role": "user", "content": judge_prompt},
+                            ],
+                            max_tokens=2,
+                            temperature=0.0,
+                            extra_body={"context_length_exceeded_behavior": "truncate"},
+                        )
+                        verdict = (
+                            (judge_resp.choices[0].message.content or "")
+                            .strip()
+                            .upper()
+                        )
+                        if not verdict.startswith("YES"):
+                            logger.info(
+                                "Task %s: Tier 1 self-judge returned '%s', escalating to Tier 2",
+                                task_id,
+                                verdict,
+                            )
+                            answer = None  # Force escalation to Tier 2
+                        else:
+                            logger.debug("Task %s: Tier 1 self-judge passed", task_id)
+                    except Exception as judge_e:
+                        logger.warning(
+                            "Task %s: Judge call failed (%s), accepting Tier 1 answer",
+                            task_id,
+                            judge_e,
+                        )
+
+                if answer:
+                    return answer
         except Exception as e:
             logger.warning("Tier 1 failed for task %s: %s", task_id, e)
         logger.info("Tier 1 fallback -> Tier 2 for task %s", task_id)
