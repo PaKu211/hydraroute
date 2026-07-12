@@ -343,7 +343,7 @@ def main() -> None:
 
     start_time = time.time()
 
-    # ── 1. Load configuration ──
+    # ── 1. Load configuration (needed for both batch and interactive) ──
     try:
         config = Config()
     except Exception as e:
@@ -357,11 +357,50 @@ def main() -> None:
         config.input_path = "/input/tasks.json"
         config.output_path = "/output/results.json"
 
+    # Set up API client
+    c_api_key = config.fireworks_api_key or os.environ.get("FIREWORKS_API_KEY", "")
+    c_base_url = config.fireworks_base_url or os.environ.get(
+        "FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"
+    )
+    client = OpenAI(api_key=c_api_key, base_url=c_base_url) if c_api_key else None
+
+    # ── Interactive / single-query mode (universal usage) ──
+    if len(sys.argv) > 2 and sys.argv[1] in ("--query", "-q"):
+        instruction = " ".join(sys.argv[2:])
+        category = (
+            sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("-") else ""
+        )
+        t = {"task_id": "q1", "category": category, "instruction": instruction}
+        if client:
+            try:
+                ans = route_task(t, config, client)
+                if ans:
+                    print(ans)
+            except Exception as e:
+                print(f"Error: {e}")
+        else:
+            print("Set FIREWORKS_API_KEY and FIREWORKS_BASE_URL first")
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
+        print("HydraRoute — Universal AI Task Router")
+        print()
+        print("Usage:")
+        print("  python -m src.main                    # Batch: read /input/tasks.json")
+        print('  python -m src.main --query "2+2?"     # Single query')
+        print('  python -m src.main -q "Capital of France?"  # Short form')
+        print()
+        print("Environment:")
+        print("  FIREWORKS_API_KEY   API key (Fireworks or OpenRouter)")
+        print("  FIREWORKS_BASE_URL  API base URL")
+        print("  ALLOWED_MODELS      Comma-separated model list")
+        sys.exit(0)
+
+    # ── 2. Log model config ──
     logger.info("Small model  : %s", config.small_model or "(none)")
     logger.info("Large model  : %s", config.large_model or "(none)")
     logger.info("All models   : %d available", len(config.allowed_models))
 
-    # ── 2. Ensure output directory ──
     ensure_output_dir(config.output_path)
 
     # ── 3. Create API client ──
