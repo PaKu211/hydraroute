@@ -13,7 +13,7 @@ logger = logging.getLogger("hydraroute")
 MODEL_PATH = os.environ.get(
     "LOCAL_MODEL_PATH", "/app/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 )
-LLAMA_CLI = os.environ.get("LLAMA_CLI_PATH", "/app/llama.cpp/llama-cli")
+LLAMA_CLI = os.environ.get("LLAMA_CLI_PATH", "/app/bin/llama-cli")
 
 _llama_available = None
 
