@@ -72,6 +72,25 @@ Total: 11 solver modules (matching 325 Agent's 11 solvers)
 5. `CACHE_PREFIX` scope bug → removed local import, use module-level import
 6. Simple classification false positive ("Great Britain" → "great" → POS) → 20-word length guard
 
+### Critical Bug Found & Fixed
+1. `Missing import re` in tier_one.py and tier_two.py → caused ALL Tier 1/2 API calls to crash with `name 're' is not defined`. Fixed by adding `import re`.
+2. Gemma tag cleaner (`<|channel|>`) added but `re` module not imported → crash on every API response.
+
+### Stress Test (Codespace — 10 tasks, Docker) ✅ 10/10 PASS
+| Task | Category | Time | Source |
+|------|----------|------|--------|
+| t1 | math (2+2) | 0.28s | ✅ Tier 0 |
+| t2 | sentiment | 0.28s | ✅ Tier 0 |
+| t3 | factual (Paris) | 0.28s | ✅ Tier 0 |
+| t4 | NER (John@Google) | 1.89s | ✅ Gemma 26B |
+| t5 | palindrome | 0.00s | ✅ Tier 0 |
+| t6 | unit conv (km→miles) | 0.00s | ✅ Tier 0 |
+| t7 | logical_reasoning | 7.14s | ✅ Gemma 31B |
+| t8 | code_generation | 26.47s | ✅ Gemma 31B ⚠️ near limit |
+| t9 | code_debugging | 2.47s | ✅ Gemma |
+| t10 | deductive_reasoning | 14.14s | ✅ Gemma 31B |
+| **Total** | | **31.12s** | **10/10 PASS** |
+
 ### Optimized System Prompts (final)
 | Category | Prompt | max_tokens |
 |----------|--------|------------|
@@ -121,6 +140,9 @@ Total: 11 solver modules (matching 325 Agent's 11 solvers)
 - Image: `hydraroute:latest`
 - Health check: OK
 - Tested in Codespace: `redesigned-adventure-9g7qjrpgg4xcpvw6`
+
+### Local SLM Note
+Qwen2.5-1.5B GGUF bundled via llama.cpp (optional, non-blocking). CPU inference too slow (30-60s) — graceful fallback to API. Would benefit from GPU in eval environment.
 
 ### Credentials
 - OpenRouter API: `https://openrouter.ai/api/v1` (key in .env)
