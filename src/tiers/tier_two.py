@@ -10,6 +10,7 @@ Features:
 """
 
 import logging
+import re
 import time
 
 from openai import OpenAI, RateLimitError, APIError
