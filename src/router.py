@@ -429,7 +429,30 @@ def route_task(
     except Exception as e:
         logger.warning("Tier 0 failed for task %s: %s", task_id, e)
 
-    # ── Step 1: Estimate difficulty for API tier selection ──
+    # ── Step 1.5: Try local LLM (GGUF) for simple categories (zero tokens) ──
+    if normalized_cat in (
+        "sentiment_classification",
+        "ner",
+        "named_entity_recognition",
+        "factual_knowledge",
+        "text_summarization",
+    ):
+        try:
+            from src.tiers import tier_local
+
+            local_answer = tier_local.execute(instruction, normalized_cat)
+            if local_answer is not None:
+                TokenTracker().record_tier_zero()
+                logger.info(
+                    "Task %s solved by Tier Local (GGUF): %s",
+                    task_id,
+                    local_answer[:60],
+                )
+                return local_answer
+        except Exception as e:
+            logger.warning("Tier Local failed for task %s: %s", task_id, e)
+
+    # ── Step 2: Estimate difficulty for API tier selection ──
     target_tier = estimate_difficulty(instruction, normalized_cat)
     logger.info(
         "Routing task %s [%s] -> Tier %d (Estimated)", task_id, category, target_tier

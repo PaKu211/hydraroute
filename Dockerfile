@@ -23,10 +23,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 
 # Create output dir (will be overridden by volume mount)
-RUN mkdir -p /input /output
+RUN mkdir -p /input /output /app/models
 
-# Health check - ensure python can import main
-RUN python -c "import src.config; import src.cache; import src.router; print('HydraRoute health check: OK')"
+# Download local GGUF model for zero-token inference (Qwen2.5 1.5B Q4_K_M ~1GB)
+RUN pip install huggingface-hub -q && \
+    python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Qwen/Qwen2.5-1.5B-Instruct-GGUF', filename='qwen2.5-1.5b-instruct-q4_k_m.gguf', local_dir='/app/models')"
+
+# Health check - ensure python can import main (model not loaded yet)
+RUN python -c "import src.config; import src.cache; import src.router; import src.tiers.tier_local; print('HydraRoute health check: OK')"
 
 # Run the agent
 CMD ["python", "-m", "src.main"]
