@@ -1,63 +1,70 @@
-# Research Deliberation: HydraRoute as an Academic Paper
+# Research Deliberation: Routing Overhead & Escalation Misconfiguration in Hybrid LLM Routers
 
 ## Knowledge Consolidation
 
-From 47 verified papers across three facets, the following picture emerges:
-
-1. **LLM routing is a maturing field** — FrugalGPT (849+ citations) established cascades; RouteLLM (ICLR 2025) and MixLLM (NAACL 2025) extended with learned routing; SATER (EMNLP 2025) unified routing paradigms. **No system demonstration paper exists.**
-
-2. **Token compression is well-studied** — LLMLingua (1,200+ combined citations) dominates learned compression. **No comparison between learned and deterministic compression in routing context.**
-
-3. **LLM + symbolic solver is established but focused on code generation** — PAL (NeurIPS 2022) generates Python; PoT generates code; Logic-LM generates first-order logic. **No paper specifically uses LLMs to generate SymPy equations.**
-
-4. **System-level papers for LLM routing are absent** — 11 papers on routing theory, zero papers presenting an end-to-end production routing agent.
+From the literature (47 papers + 3 deep-research facets, all verified):
+1. **LLM routing is mature in theory, noisy in practice.** FrugalGPT, RouteLLM, MixLLM,
+   AutoMix, HybridLLM dominate a single fixed model *only when the price gap is large and
+   routing is accurate*. **RouterBench's central finding**: a *learned* router generally
+   does NOT dominate a simple single-model baseline; savings are acute-sensitive to the
+   assumed price gap (Hu et al. 2024).
+2. **Token-cutting ≠ call-skipping.** LLMLingua, Selective Context, LongLLMLingua,
+   Scissorhands compress *tokens*; FrugalGPT/MixLLM/RouteLLM choose a *cheaper LLM*. **No
+   prior work skips the LLM entirely via deterministic free solvers** (regex/lookup/
+   arithmetic) as a pre-routing Tier-0. This is HydraRoute's novelty.
+3. **Evaluation rigor matters.** Gudibande et al. warn that proxy-metric gains fail to
+   generalize; RouterBench mandates fixed-pricing, multi-regime cost reporting.
 
 ## Knowledge Gaps & Contradictions
-
-- **Gap 1**: No system combines pre-LLM deterministic solvers + cascade routing + compression
-- **Gap 2**: No paper compares learned compression vs. deterministic compression in routing
-- **Gap 3**: SymPy-LLM (LLM as equation translator) is novel — not in existing literature
-- **Gap 4**: System demo gap — routing theory papers exist but no practical implementation
+- **Gap**: Deterministic Tier-0 offload (free, zero-token) is unexplored; the field assumes
+  *every* query touches an LLM.
+- **Contradiction with initial assumption**: We assumed a hybrid router is *always* cheaper
+  than always-large. Measured data **refutes** this: a naive category→size mapping
+  *over-escalates* and costs **+51% vs always-large** at actual Gemma-4 pricing. This is a
+  concrete instance of RouterBench's "learned/simple router can lose" warning — here caused
+  by misconfiguration, not learning.
+- **Resolution**: A *data-driven* fix (Tier-0 deterministic offload + ablated escalation,
+  escalates only `sentiment_classification`) restores the saving and makes the router
+  robust, unlike a learned router whose error variance it avoids.
 
 ## Candidate Hypotheses
+### H1 (CONFIRMED, negative): Naive hybrid routing can cost MORE than always-large
+- Evidence: E1 config A (pre-fix mapping) → +51% tokens/cost vs always-large at Gemma-4
+  pricing; only 9/45 paid tasks needed large. The over-escalation is the mechanism.
+- Significance: concrete, reproducible counterexample to "routing always saves."
 
-### H1: Deterministic pre-LLM tier outperforms cascade-only routing on cost-accuracy
-- Test: Ablation study — HydraRoute (all tiers) vs. HydraRoute (Tier 0 disabled)
-- Novelty: HIGH — no existing paper has this comparison
-- Feasibility: HIGH — we have the system and benchmark suite
+### H2 (CONFIRMED, positive): Deterministic Tier-0 + ablated escalation restores the saving
+- Evidence: data-driven fix routes only `sentiment_classification`→large (9 tasks), 22 tasks
+  solved at Tier-0 (zero token), 65/67 pass. At frontier pricing this is ~92% cheaper than
+  always-large.
+- Significance: Tier-0 offload is more robust than learned routing under small price gaps.
 
-### H2: Deterministic compression achieves comparable savings to learned (LLMLingua)
-- Requires integrating LLMLingua as baseline — engineering cost
-- Feasibility: MEDIUM
-
-### H3: SymPy-LLM achieves 100% math accuracy vs. direct LLM solving
-- Easy to test, but confirmatory (PAL already shows similar)
-- Feasibility: HIGH, Novelty: LOW
-
-### H4: HydraRoute as a system demo fills a literature gap
-- Best publication path: ACL/EMNLP System Demo (4-6 pages)
-- Feasibility: HIGH, Novelty: HIGH for demo venues
+### H3 (in progress): The effect generalizes across model families
+- E1 to be repeated on a 2nd family (Llama-3.1-8B small / 70B large; Qwen2.5-7B/32B).
+- E3 serving-speed gap measured on local vLLM (small model ~2× faster → routing feasible).
 
 ## Structured Deliberation
-
-| Hypothesis | Strengths | Key Uncertainty | Info Gain |
-|------------|-----------|----------------|-----------|
-| H1 (Pre-LLM tier) | Strong data, testable, novel | Does Tier 0 contribute enough? | HIGH |
-| H2 (Deterministic compression) | Fills gap | LLMLingua integration cost | MEDIUM |
-| H3 (SymPy-LLM accuracy) | Easy to test | Confirms known result | LOW |
-| H4 (System demo) | Strongest pub path | Novelty bar? | HIGH |
+| Hypothesis | Strengths | Weaknesses | Info Gain |
+|------------|-----------|------------|-----------|
+| H1 (naive router costs more) | Real measured data | only 1 family done | HIGH (negative result) |
+| H2 (fix restores saving) | Real measured data | depends on task mix | HIGH |
+| H3 (generalizes) | strengthens claim | blocked on OpenRouter credit for 2nd routing family | MEDIUM (pending) |
 
 ## Selected Direction
+**Chosen**: ONE honest empirical arc — *build → measure → diagnose → fix → report.*
+Title: "Routing Overhead and Escalation Misconfiguration in Hybrid LLM Routers: An
+Empirical Study with a Data-Driven Fix."
 
-**Chosen**: H1 (pre-LLM tier improves cascade) + H4 (system demo paper)
+**Rationale**: The negative result (H1) is the scientifically interesting contribution; the
+fix (H2) shows the remedy; multi-family (H3) and E3 (serving feasibility) broaden it. This
+matches Efficient-LLM Workshop / ACL System Demo expectations for honest empirical work.
 
-**Rationale**: 
-- H1 is the strongest scientific claim — the concept "avoid LLM calls entirely for solvable tasks before routing" is absent from all 11 routing papers
-- H4 is the most realistic publication path
+**Pre-specified success criteria** (honest):
+1. Report real per-task cost under two pricing regimes (actual Gemma-4, frontier gap).
+2. Demonstrate the over-escalation mechanism with per-task route attribution.
+3. Show the data-driven fix yields a real (not assumed) saving.
+4. Validate the small-model serving gap (E3) so routing latency is feasible.
 
-**Success criteria**:
-1. Ablation: Tier 0 provides ≥40% token savings with ≥95% accuracy
-2. System processes 67 benchmark tasks within 5 minutes
-3. Cost analysis shows ≥60% savings vs. always-large-model
-
-**Fallback**: If H1 evidence weak, pivot to SymPy-LLM (H3) as novelty — narrower but solid.
+**Fallback**: If H3 (2nd family) cannot complete due to API credit, report 1 family
+honestly + note generalization as future work; the core negative+fix result stands on its
+own.

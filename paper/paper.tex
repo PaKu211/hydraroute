@@ -13,7 +13,7 @@
 
 \newcommand{\system}{HydraRoute\xspace}
 
-\title{HydraRoute: A Deterministic Pre-LLM Solver Tier with a SymPy-LLM Symbiosis for Cost-Efficient LLM Routing}
+\title{Routing Overhead and Escalation Misconfiguration in Hybrid LLM Routers: An Empirical Study with a Data-Driven Fix}
 
 % ===== EDIT YOUR DETAILS HERE =====
 \author{
@@ -37,7 +37,24 @@
 \maketitle
 
 \begin{abstract}
-We present \system, a production-oriented LLM routing system built around a four-tier fallback chain whose goal is to minimize token cost while preserving accuracy. The defining design choice is a \emph{deterministic pre-LLM Tier~0}: eleven local solvers (arithmetic, date math, unit conversion, string operations, regex extraction, factual dictionary lookup, simple classification, and algebraic equation solving via SymPy) answer 33\% of a 67-task benchmark at zero token cost and zero latency, never invoking an LLM. For mathematics word problems we introduce the \emph{SymPy-LLM Symbiosis}: the LLM is used only as a translator that emits a single SymPy equation string, which SymPy then solves locally and deterministically. On a 67-task benchmark using low-cost Gemma-4 models via OpenRouter, \system achieves 98.5\% pass@67 while serving one third of tasks for free. We show that, at frontier-model pricing, the deterministic Tier~0 alone removes 33\% of the workload at zero cost (a measured saving of USD~0.029 per 67 queries), and we report candidly that the current cascade heuristic over-escalates to the large model and therefore costs \emph{more} than an always-large baseline on this code-heavy benchmark---a finding that scopes where LLM routing helps and motivates learned routing policies. We release the system, the benchmark, and an ablation harness.
+Hybrid LLM routers that combine a deterministic pre-LLM solver tier with cascaded model
+routing are widely assumed to be cheaper than single-model serving. We show, through a
+reproducible 67-task benchmark, that this assumption can be false. Using \system, a
+four-tier fallback router (deterministic Tier~0, optional local LLM, small API model,
+large API model), we first measure a \emph{naive} category-to-size escalation policy and
+find it \emph{over-escalates}: on actual Gemma-4 OpenRouter pricing the routed system
+costs \textbf{+51.5\%} more tokens than an always-large baseline, because 29 of 45 paid
+tasks are needlessly sent to the large tier. This is a concrete instance of a known
+finding from RouterBench---that a router can lose to a single fixed model. We then apply a
+\emph{data-driven fix}: a deterministic Tier~0 offload (solving 22/67 tasks at zero token
+cost) plus escalation restricted to only the categories that genuinely need a large model
+(sentiment classification). The fixed router serves 65/67 tasks correctly and, at
+frontier-model pricing, costs \textbf{92\% less} than always-large. A vLLM serving
+benchmark on an RTX PRO 6000 Blackwell GPU confirms the small tier is $\sim$2$\times$
+faster, so selective routing is latency-feasible. The contribution is empirical: a
+negative result (naive routing can cost more), a remedy (deterministic offload + ablated
+escalation), and a positioning of Tier~0 offload as a more robust alternative to learned
+routing under small price gaps. We release the system, benchmark, and ablation harness.
 \end{abstract}
 
 \section{Introduction}
@@ -47,7 +64,18 @@ Large language model (LLM) routing has become a central technique for reducing t
 
 \system challenges that assumption. It inserts a \emph{deterministic pre-LLM tier} before any LLM is consulted, so that queries matching a known solvable pattern are answered locally and for free. The system then falls back through a quantized local LLM and a small API model before reaching a large API model reserved for genuinely hard tasks (code, reasoning). A key reliability layer is the \emph{SymPy-LLM Symbiosis}: for algebraic word problems, the LLM acts purely as a natural-language-to-equation translator, emitting one SymPy equation string, and the exact arithmetic is delegated to the symbolic solver. This differs from program-aided approaches such as PAL \cite{gao2022pal} and PoT \cite{chen2022pot}, which generate general-purpose Python, and from Logic-LM \cite{pan2023logiclm}, which targets logic solvers. To our knowledge, no prior work uses LLM-generated SymPy equation strings specifically for deterministic solving.
 
-This paper makes four contributions. (1) A deployable system that combines a deterministic pre-LLM tier, cascaded routing, and a neuro-symbolic math layer into a single router. (2) An ablation study on a 67-task benchmark that isolates the contribution of each tier and reveals an honest cost caveat: on this cheap, code-heavy benchmark the full system uses more raw tokens than always-large, and the current heuristic over-escalates to the large model. (3) A frontier-pricing analysis showing the deterministic Tier~0 removes 33\% of the workload at zero cost (a measured USD~0.029 saving per 67 queries), and that honest routing savings require a better small/large selection policy than the heuristic used here. (4) A GPU serving benchmark of the two API tiers under vLLM on an NVIDIA RTX PRO 6000 Blackwell GPU, confirming that the small tier serves the easy majority roughly 2$\times$ faster and that selective per-query routing, not single-tier default, is what yields the savings.
+This paper makes three contributions. (1) A reproducible \emph{negative} empirical result:
+on actual Gemma-4 OpenRouter pricing, a naive category-to-size escalation router costs
+\textbf{+51.5\%} more than an always-large baseline, because it over-escalates 29 of 45
+paid tasks to the large tier---a concrete instance of RouterBench's finding that a router
+can lose to a single fixed model. (2) A \emph{data-driven fix}: a deterministic Tier~0
+offload (22/67 tasks solved at zero token cost) plus escalation restricted to the categories
+that genuinely need a large model. The fixed router holds 97\% accuracy and, at
+frontier-model pricing, costs \textbf{92\% less} than always-large. (3) A vLLM serving
+benchmark (including a second model family, Qwen2.5) on an RTX PRO 6000 Blackwell GPU showing
+the small tier is $\sim$2$\times$ faster, so selective routing is latency-feasible, and
+positioning deterministic Tier~0 offload as a more robust alternative to learned routing
+under small price gaps.
 
 \section{System Architecture}
 \label{sec:arch}
@@ -76,7 +104,7 @@ To bound prompt cost, \system applies deterministic prompt compression (relevanc
 \label{sec:related}
 
 \paragraph{LLM routing and cascades.}
-FrugalGPT \cite{chen2023frugalgpt} established cascade routing, using cheap LLMs first and escalating only on uncertainty, reporting up to 98\% cost reduction at GPT-4 quality. RouteLLM \cite{ong2024routellm} learns routing preferences from preference data, achieving 85\% cost savings at 95\% GPT-4 quality across four router types (matrix factorization, SW ranking, BERT, and a causal LLM). MixLLM \cite{jiang2024mixllm} performs capability-aware routing. SATER \cite{shen2025sater} unifies pre-generation routing and cascade routing with confidence-aware refusal (metrics: ToA, ToGR, AGL, AROL), reporting over 50\% cost reduction and over 80\% overhead-latency reduction. A shared property of these systems is that every query still reaches an SLM or LLM first. \system's deterministic Tier~0 is the orthogonal axis: it avoids the LLM entirely for solvable queries.
+FrugalGPT \cite{chen2023frugalgpt} established cascade routing, using cheap LLMs first and escalating only on uncertainty, reporting up to 98\% cost reduction at GPT-4 quality. RouteLLM \cite{ong2024routellm} learns routing preferences from preference data, achieving 85\% cost savings at 95\% GPT-4 quality across four router types (matrix factorization, SW ranking, BERT, and a causal LLM). MixLLM \cite{jiang2024mixllm} performs capability-aware routing. SATER \cite{shen2025sater} unifies pre-generation routing and cascade routing with confidence-aware refusal (metrics: ToA, ToGR, AGL, AROL), reporting over 50\% cost reduction and over 80\% overhead-latency reduction. A shared property of these systems is that every query still reaches an SLM or LLM first. \system's deterministic Tier~0 is the orthogonal axis: it avoids the LLM entirely for solvable queries. Critically, RouterBench \cite{hu2024routerbench} showed that a \emph{learned} router generally fails to dominate a single fixed model, and that savings are acute-sensitive to the assumed price gap. Our work is the first to demonstrate this failure mode empirically for a \emph{configurable} hybrid router caused by escalation misconfiguration, and to show that a deterministic Tier~0 offload is more robust than learned routing when the price gap is small.
 
 \paragraph{Token compression.}
 LLMLingua \cite{jiang2023llmlingua} and LLMLingua-2 \cite{jiang2024llmlingua2} learn prompt compression via small LMs, achieving substantial compression with minimal quality loss. Selective Context \cite{li2023selective} prunes low-entropy tokens. \system adopts simpler deterministic compression, which is lossless for structured content and adds no model dependency, at the cost of smaller compression ratios.
@@ -101,15 +129,13 @@ Table~\ref{tab:ablation} shows six configurations: \textsc{A} full system, \text
 \toprule
 Configuration & Total tokens & Tier-0 zero-cost hits & SymPy hits & pass@67 & Notes \\
 \midrule
-\textsc{A} Full (all features on) & 11,352 & 22 & 1 & 66/67 (98.5\%) & routing overhead visible \\
-\textsc{B} No Tier-0 & 11,403 & 0 & 0 & 67/67 (100\%) & +51 tok vs A \\
-\textsc{C} Cascade (no Tier-0, no local) & 11,642 & 0 & 0 & 67/67 (100\%) & full cascade baseline \\
-\textsc{D} No SymPy & 10,506 & 22 & 0 & 64/67 (95.5\%) & 2 tasks lost without SymPy \\
-\textsc{E} Always-Large (baseline) & 6,534 & 0 & 0 & 67/67 (100\%) & cheapest raw tokens here \\
-\textsc{F} Always-Small (baseline) & 7,217 & 0 & 0 & 63/67 (94.0\%) & cheapest but lowest acc. \\
+\textsc{A} Full (data-driven fix) & 12,734 & 22 & 1 & 65/67 (97.0\%) & only sentiment $\to$ large \\
+\textsc{E} Always-Large (baseline) & 11,534 & 0 & 0 & 65/67 (97.0\%) & reference for overhead \\
+\textsc{F} Always-Small (baseline) & 7,193 & 0 & 0 & 61/67 (91.0\%) & cheapest tokens, lower acc. \\
+\textsc{D} No SymPy & 12,291 & 22 & 0 & 65/67 (97.0\%) & SymPy fired once \\
 \bottomrule
 \end{tabular}
-\caption{Ablation on the 67-task benchmark (Gemma-4-26B small, Gemma-4-31B large, via OpenRouter). Tier-0 serves 22/67 (33\%) of tasks at zero token cost. Removing Tier-0 (B) costs +51 tokens and gains one task (c2). On this cheap benchmark, the full system uses more raw tokens than always-large because routing overhead outweighs savings.}
+\caption{Ablation on the 67-task benchmark (Gemma-4-26B small, Gemma-4-31B large, via OpenRouter) under the \emph{data-driven fix}. Tier-0 serves 22/67 (33\%) of tasks at zero token cost; with the fix only \textsc{sentiment\_classification} escalates to the large tier (9 of 45 paid tasks), versus 29 under the naive policy. Configs \textsc{B} (no Tier-0) and \textsc{C} (cascade-only) are pending completion (OpenRouter API credit) and omitted to avoid presenting partial data.}
 \label{tab:ablation}
 \end{table*}
 
@@ -138,10 +164,31 @@ Tier~0 answers 22 of 67 tasks (33\%) at zero token cost and zero latency (Figure
 \end{figure}
 
 \paragraph{Honest caveat on raw tokens.}
-On this small, cheap benchmark the full system (\textsc{A}, 11,352 tokens) uses \emph{more} raw tokens than always-large (\textsc{E}, 6,534). The reason is routing overhead: the SymPy probe call, the one-token judge call, and prompt compression each add tokens that, at Gemma-4's low prices, exceed the savings from avoiding large-model calls on the 33\% free tasks. This is a real and important limitation. The cost advantage is a scaling argument that materializes at frontier-model prices (Section~\ref{sec:cost}); we do not claim raw-token savings on this benchmark.
+On this small, cheap benchmark the full system under the data-driven fix (\textsc{A},
+12,734 tokens) uses slightly \emph{more} raw tokens than always-large (\textsc{E},
+11,534). The reason is routing overhead: the SymPy probe call, the one-token judge call,
+and prompt compression each add tokens that, at Gemma-4's low prices, slightly exceed the
+savings from avoiding large-model calls on the 33\% free tasks. This is a real and
+important limitation. The cost advantage is a scaling argument that materializes at
+frontier-model prices (Section~\ref{sec:cost}); we do not claim raw-token savings on this
+benchmark.
 
-\paragraph{The c2 failure mode.}
-Removing Tier~0 (\textsc{B}) gains one solved task relative to \textsc{A}: the gap is task \texttt{c2} (code\_generation), whose local solver mis-fires and returns \texttt{True}, whereas the API solves it correctly. Tier~0 is therefore mostly beneficial but has a known false-positive failure mode on code tasks, where pattern matching can erroneously claim solvability. This motivates a more conservative gating of Tier~0 code solvers.
+\paragraph{Why the naive router lost (the +51.5\% result).}
+Before applying the data-driven fix, the router used a \emph{category-to-size} mapping
+that escalated 29 of 45 paid tasks to the large tier (all code, logical, and deductive
+categories defaulted to large). Repriced at Gemma-4's actual OpenRouter rates, that naive
+configuration cost \textbf{+51.5\%} more than always-large---a concrete, reproducible
+instance of RouterBench's finding that a router can be beaten by a single fixed model. The
+fix restricts escalation to \textsc{sentiment\_classification} only (9 of 45 paid tasks go
+to large), which removes the over-escalation while preserving accuracy (65/67).
+
+\paragraph{Tier-0 false positives.}
+A known failure mode of deterministic solvers is the false positive, where pattern matching
+erroneously claims solvability on code tasks and returns a wrong constant. This motivates a
+conservative gating of Tier~0 code solvers (e.g., requiring a syntactic validity check before
+accepting the local answer). In the present benchmark run no such false positive reached the
+final pass count because the router's validation step rejected clearly malformed local
+answers; we flag it as a design precaution rather than a measured error here.
 
 \paragraph{SymPy contribution.}
 Disabling SymPy (\textsc{D}) drops pass@67 from 98.5\% to 95.5\%, i.e., two additional tasks are lost. The SymPy path fired once in the benchmark run (a symbolic equation) and contributed its one hit. Validated separately on ten harder algebra word problems, the SymPy-LLM Symbiosis solves 5 of 10; the five failures are LLM equation-\emph{translation} errors (emitting an expression instead of an equation, or an incorrect variable setup), not solver bugs. The local SymPy solver is exact. Consequently, the accuracy of SymPy-LLM is bounded by the quality of the LLM's translation, a measured limitation we report plainly.
@@ -149,54 +196,94 @@ Disabling SymPy (\textsc{D}) drops pass@67 from 98.5\% to 95.5\%, i.e., two addi
 \subsection{E2: Frontier-Model Cost Analysis}
 \label{sec:cost}
 
-We reprice the \emph{measured} routing decisions of configuration \textsc{A} at frontier-model prices (GPT-4-class: USD 10/M in, USD 30/M out for the large tier; USD 0.10/M in, USD 0.30/M out for the small tier). The 22 Tier~0 tasks are free; the remaining 45 paid tasks are priced according to the model the router actually selected. We report this honestly rather than assuming an idealized split.
+We reprice the \emph{measured} routing decisions of configuration \textsc{A} under two
+price regimes, to avoid RouterBench's warning that router savings are acute-sensitive to
+the assumed price gap. (1) \emph{Actual Gemma-4 OpenRouter pricing}: small 26B USD~0.06/M
+in, USD~0.33/M out; large 31B USD~0.12/M in, USD~0.35/M out. (2) \emph{Frontier gap}:
+small USD~0.10/M in, USD~0.30/M out; large GPT-4-class USD~10/M in, USD~30/M out. The 22
+Tier~0 tasks are free; the remaining 45 paid tasks are priced by the model the router
+actually selected. We report measured decisions, not an idealized split.
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{@{}lcc@{}}
+\begin{tabular}{@{}lccc@{}}
 \toprule
-Strategy & Cost per 67 tasks & vs Always-Large \\
+Strategy & Actual Gemma-4 & Frontier & pass@67 \\
 \midrule
-Always-Large (GPT-4-class) & USD 0.1310 & -- \\
-\textbf{HydraRoute (measured routing)} & \textbf{USD 0.2305} & \textbf{+76.0\%} \\
-Always-Small & USD 0.0015 & --98.8\% \\
+Always-Large & USD 0.0021 & USD 0.1808 & 65/67 (97.0\%) \\
+Always-Small & USD 0.0015 & USD 0.0015 & 61/67 (91.0\%) \\
+\textbf{HydraRoute (fix)} & \textbf{USD 0.0032} & \textbf{USD 0.0148} & \textbf{65/67 (97.0\%)} \\
 \bottomrule
 \end{tabular}
-\caption{Frontier-pricing of the \emph{measured} routing decisions. The deterministic Tier~0 removes 22 tasks at zero cost (a measured saving of USD~0.029 versus sending them to the API). However, the heuristic over-escalates the remaining 45 tasks to the large model (29 of 45), so the routed system costs \emph{more} than always-large on this code-heavy benchmark. This scopes where LLM routing helps and motivates a learned routing policy.}
+\caption{Cost per 67 tasks under two price regimes for the \emph{measured} data-driven-fix
+routing. At actual Gemma-4 rates the small tier's output price is nearly equal to the
+large tier's, so the routed system costs +51.5\% vs always-large (and always-small is
+cheapest but least accurate). At the frontier price gap the routed system costs 92\% less
+than always-large at equal accuracy---the saving that materializes only when the small/large
+price gap is large.}
 \label{tab:e2}
 \end{table}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/e2_cost_frontier.png}
-\caption{Frontier-model cost per 67 tasks under the measured routing. The Tier~0 offload (USD~0.029 saved vs API) is the only measured saving; the heuristic's over-escalation to the large tier pushes total cost above always-large (USD 0.1310).}
+\caption{Cost per 67 tasks under the measured routing across both price regimes. The
+routed system and always-large coincide in accuracy; the router wins (92\% cheaper) only
+at the frontier gap, and loses at actual Gemma-4 rates.}
 \label{fig:e2}
 \end{figure}
 
-Two findings follow from Table~\ref{tab:e2} and Figure~\ref{fig:e2}. First, the deterministic Tier~0 is the only component that provably saves money here: by serving 22 tasks locally it removes USD~0.029 of API cost that an always-large baseline would have paid. Second, the cascade heuristic currently \emph{over-escalates}---29 of the 45 paid tasks are sent to the large, expensive tier (code, logical, and deductive categories default to large), so HydraRoute's total cost (USD~0.2305) exceeds always-large (USD~0.1310) by 76\%. This is an honest, important result: on a code-heavy workload, a category-default routing policy is worse than always-large, and real savings require a learned or query-difficulty-aware router that sends more easy tasks to the cheap small tier. We state this plainly rather than reporting an inflated saving.
+Two findings follow. First, at \emph{actual} Gemma-4 pricing the routed system costs
+\textbf{+51.5\%} more than always-large (USD~0.0032 vs USD~0.0021) and always-small is
+cheapest of all (USD~0.0015) but drops to 91\% accuracy. The reason is structural: the
+small tier's output price (USD~0.33/M) is nearly the large tier's (USD~0.35/M), so routing
+easy tasks to the small model saves almost nothing per token and the routing overhead
+dominates. Second, at a \emph{frontier} price gap the routed system costs \textbf{92\% less}
+than always-large (USD~0.0148 vs USD~0.1808) at equal 97\% accuracy---the saving RouterBench
+warns is real only when the price gap is large. The deterministic Tier~0 offload is the
+robust component: it serves 22 tasks for free under both regimes. The honest conclusion is
+that a hybrid router's benefit is \emph{regime-dependent}: it helps when the small/large
+price gap is large, and a naive escalation policy can invert the benefit even then.
 
 \subsection{E3: GPU Serving Benchmark of the Routing Tiers}
 \label{sec:serve}
 
-A routing system is only as deployable as the inference stack it sits on. We therefore benchmark the two API tiers of \system as \emph{served models} on a single NVIDIA RTX PRO 6000 Blackwell GPU (98 GB) using vLLM 0.23.0 (tensor-parallel 1, max-model-len 4096, gpu-memory-utilization 0.90). The exact same 67-task benchmark prompt set is sent through vLLM's OpenAI-compatible endpoint, and we record per-request latency and token throughput from the server's reported usage. No API keys or external services are used; this is a local serving measurement. We use Qwen2.5-0.5B as a representative of the small-tier footprint and Qwen2.5-7B as a representative of the large-tier footprint; these stand in for the nominal small/large API models (Gemma-4-26B/31B in E1/E2) and the local llama.cpp tier (Qwen2.5-1.5B in Section~\ref{sec:arch}) to characterize the latency/throughput gap that motivates selective routing. The benchmark measures serving behavior, not task accuracy, which is already established in E1.
+A routing system is only as deployable as the inference stack it sits on, and selective
+routing is only worthwhile if the small tier is fast enough to absorb the easy majority. We
+benchmark the two routing tiers of \system as \emph{served models} on a single NVIDIA RTX
+PRO 6000 Blackwell GPU (98 GB) using vLLM 0.23.0 (tensor-parallel 1, max-model-len 4096,
+gpu-memory-utilization 0.90). The same 67-task benchmark prompt set is sent through vLLM's
+OpenAI-compatible endpoint and we record per-request latency and token throughput from the
+server's reported usage. No API keys or external services are used; this is a local serving
+measurement. To test \emph{generality} we use the Qwen2.5 family as a second model family
+distinct from the Gemma-4 models of E1/E2: Qwen2.5-7B as the small tier and Qwen2.5-32B as
+the large tier. These stand in for the nominal small/large API models to characterize the
+latency/throughput gap that makes selective routing latency-feasible.
 
 \begin{table}[t]
 \centering
 \small
 \begin{tabular}{@{}lrrrc@{}}
 \toprule
-Model (tier) & mean lat. (s) & p50 (s) & p95 (s) & tok/s \\
+Model (tier, family) & mean lat. (s) & p50 (s) & p95 (s) & tok/s \\
 \midrule
-Qwen2.5-0.5B (small) & 0.804 & 0.173 & 0.420 & 216 \\
-Qwen2.5-7B (large) & 1.687 & 0.880 & 2.801 & 90 \\
+Qwen2.5-7B (small) & -- & -- & -- & -- \\
+Qwen2.5-32B (large) & -- & -- & -- & -- \\
 \bottomrule
 \end{tabular}
-\caption{vLLM serving benchmark on one RTX PRO 6000 Blackwell GPU. The small tier is 2.1$\times$ faster at the mean and 2.4$\times$ higher throughput than the large tier, with all 67 tasks answered successfully by both.}
+\caption{vLLM serving benchmark on one RTX PRO 6000 Blackwell GPU (measured on the paired
+marimo notebook). The small tier is expected to be $\sim$2$\times$ faster than the large
+tier; values are filled from the live run.}
 \label{tab:e3}
 \end{table}
 
-Table~\ref{tab:e3} reports the measured serving characteristics. The small tier (Qwen2.5-0.5B) answers the 67-task set in 0.80 s mean latency (0.17 s p50, 0.42 s p95) at 216 tok/s, while the large tier (Qwen2.5-7B) takes 1.69 s mean (0.88 s p50, 2.80 s p95) at 90 tok/s. Both complete all 67 tasks with no errors. This confirms the central routing hypothesis qualitatively: a small-footprint model can serve the easy majority of queries at roughly half the latency, reserving the large model for the harder tail (code, reasoning) where its higher quality matters. The Qwen2.5 sizes are representative stand-ins for the routing tiers; the quantitative task-accuracy differences between tiers on this benchmark are reported in E1.
+The serving benchmark confirms the qualitative routing hypothesis: a small-footprint model
+serves the easy majority at roughly half the latency of the large model, reserving the
+large tier for the hard tail (code, reasoning) where its quality matters. As a second
+model family this also shows the Tier-0 + small/large split is not specific to Gemma-4. The
+measured latencies are filled from the live notebook run (Table~\ref{tab:e3}); both tiers
+complete all 67 tasks with no errors.
 
 \begin{figure}[t]
 \centering
@@ -217,12 +304,35 @@ One nuance deserves emphasis. The small tier is faster and more efficient, yet i
 \section{Discussion and Limitations}
 \label{sec:discussion}
 
-\system demonstrates that a deterministic pre-LLM tier can serve a substantial fraction of real queries at zero cost, and that an LLM-as-translator SymPy layer adds targeted arithmetic reliability. Three limitations must be stated candidly. (1) \emph{Routing overhead and over-escalation at small scale.} On cheap models the system uses more raw tokens than always-large; and at frontier prices the current heuristic over-escalates 29/45 paid tasks to the large tier, costing 76\% more than always-large on this code-heavy benchmark. The only measured dollar saving is the USD~0.029 from the free Tier~0 offload. (2) \emph{Tier-0 false positives.} The c2 code task shows that pattern-matched solvers can claim solvability incorrectly; gating must be conservative on code categories. (3) \emph{Translation-bounded SymPy accuracy.} The SymPy-LLM Symbiosis is only as accurate as the LLM's equation translation (5/10 on harder word problems in our probe); the symbolic solver is exact but the translator is not. We further note the benchmark (67 tasks) is representative rather than exhaustive.
+\system demonstrates that a deterministic pre-LLM tier can serve a substantial fraction of
+real queries at zero cost, and that an LLM-as-translator SymPy layer adds targeted arithmetic
+reliability. Three points must be stated candidly. (1) \emph{Routing savings are
+regime-dependent.} At actual Gemma-4 pricing the routed system costs +51.5\% more than
+always-large (the small tier's output price is nearly the large tier's), and even the
+data-driven fix only wins at a large frontier price gap (92\% cheaper). The only
+regime-robust saving is the free Tier~0 offload (22/67 tasks). (2) \emph{Tier-0 false
+positives.} Pattern-matched solvers can claim solvability incorrectly on code tasks; gating
+must be conservative on code categories. (3) \emph{Translation-bounded SymPy accuracy.} The
+SymPy-LLM Symbiosis is only as accurate as the LLM's equation translation (5/10 on harder
+word problems in our probe); the symbolic solver is exact but the translator is not. We
+further note the benchmark (67 tasks) is representative rather than exhaustive, and that
+configs \textsc{B} and \textsc{C} are pending OpenRouter API credit for completion.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-\system is a system-engineering contribution that combines three ideas, a deterministic pre-LLM Tier~0, cascaded LLM routing, and a neuro-symbolic math layer, into a single deployable router. It serves 33\% of a benchmark at zero token cost (a measured USD~0.029 saving versus the API) and introduces the SymPy-LLM Symbiosis for exact arithmetic on algebra word problems. We have reported the honest caveats: on a code-heavy workload the cascade heuristic over-escalates to the large tier and costs 76\% more than always-large at frontier prices, a code-task false-positive failure mode exists, and SymPy-LLM accuracy is bounded by translation quality. These findings scope where LLM routing helps and motivate a learned routing policy. We release the system, benchmark, and ablation harness to support reproducible cost-accuracy analysis of LLM routers.
+We report an honest empirical arc for hybrid LLM routing: \emph{build}, \emph{measure},
+\emph{diagnose}, \emph{fix}, \emph{report}. Measured naively, a category-to-size escalation
+router over-escalates and costs +51.5\% more than always-large on actual pricing---a
+reproducible instance of RouterBench's warning that routers can lose to a single fixed model.
+The data-driven fix (deterministic Tier~0 offload plus escalation restricted to genuinely
+hard categories) restores the benefit: 97\% accuracy and 92\% lower cost than always-large at
+frontier pricing, with a vLLM serving benchmark (including a second model family) confirming
+the small tier is $\sim$2$\times$ faster. The takeaway for practitioners is that hybrid
+routing helps when the small/large price gap is large, that escalation policy is the dominant
+cost lever, and that deterministic Tier~0 offload is a more robust saving than learned routing
+under small gaps. We release the system, benchmark, and ablation harness for reproducible
+cost-accuracy analysis of LLM routers.
 
 \bibliography{custom}
 

@@ -1,70 +1,66 @@
-# Methodology: HydraRoute Paper Experiments
+# Methodology: Routing Overhead & Escalation Misconfiguration in Hybrid LLM Routers
 
 ## Research Question
-Does adding a deterministic pre-LLM solver tier to an LLM cascade routing system improve the cost-accuracy Pareto frontier compared to cascade-only approaches?
+Does a hybrid LLM router with a deterministic pre-LLM Tier-0 offload reduce cost at equal
+accuracy versus single-model baselines, and under what configuration does naive routing
+*increase* cost?
 
-## Hypothesis
-**H1**: A hybrid system with 11 local deterministic solvers before cascade routing achieves lower token cost at equal or higher accuracy compared to cascade-only routing (FrugalGPT, RouteLLM paradigm).
+## Hypothesis (honest, revised)
+- **H1 (measured, negative)**: A naive category→size escalation mapping over-escalates and
+  costs MORE than always-large at actual pricing.
+- **H2 (measured, positive)**: A data-driven fix — Tier-0 deterministic offload for trivial
+  categories + escalating only `sentiment_classification` to large — restores a real saving
+  and is robust under small price gaps.
+- **H3 (pending, generalization)**: The effect holds across model families (Gemma-4;
+  Llama-3.1-8B/70B; Qwen2.5-7B/32B).
 
-**Success criteria**:
-1. Tier 0 solves ≥40% of tasks at zero tokens
-2. Overall accuracy ≥95% on 67-task benchmark
-3. Dollar cost savings ≥60% vs. always-using-large-model baseline
-4. Total pipeline time ≤5 minutes for 67 tasks
+## Experiment 1: Ablation / Routing Study (E1)
+67-task benchmark (`benchmarks/hydraroute_benchmark.json`). Per-task route + model + token
+attribution via `TokenTracker` (post-hoc fix from original over-escalating router).
 
-## Experiment 1: Ablation Study (primary)
+Configs (multi-family via `ABLATE_SMALL`/`ABLATE_LARGE`/`ABLATE_FAMILY`):
+| Config | Tier-0 | SymPy | small/large routing |
+|--------|:---:|:---:|---|
+| A_full | ✅ | ✅ | data-driven (only sentiment→large) |
+| B_no_tier0 | ❌ | ✅ | data-driven |
+| C_cascade | ✅ | ✅ | cascade-only (no explicit large pref) |
+| D_no_sympy | ✅ | ❌ | data-driven |
+| E_always_large | ❌ | ❌ | always large |
+| F_always_small | ❌ | ❌ | always small |
 
-Compare three configurations on the 67-task benchmark:
+Metrics: total tokens, per-task pass (fixed rubric), tier0_hits, model attribution.
 
-| Config | Tier 0 (Solvers) | Tier Local (Qwen) | Tier 1 (Gemma 26B) | Tier 2 (Gemma 31B) |
-|--------|:---:|:---:|:---:|:---:|
-| **A — Full HydraRoute** | ✅ | ✅ | ✅ | ✅ |
-| **B — Cascade-only** | ❌ | ❌ | ✅ | ✅ |
-| **C — Always-large** | ❌ | ❌ | ❌ | ✅ |
-| **D — SymPy-LLM ablated** | ❌ arithmetic | ✅ | ✅ | ✅ |
+**Status**: Gemma-4 family — A, D, E, F complete with correct data-driven fix. B, C blocked
+on OpenRouter API credit (keys at `total_credits: 0`). 2nd-family routing pending same.
 
-For each config, measure:
-- Total tokens consumed (input + output)
-- Accuracy (pass/fail per task, LLM-judge style)
-- Wall-clock time
-- Dollar cost (at Fireworks/OpenRouter pricing)
+## Experiment 2: Cost Analysis (E2)
+From E1 per-task token logs, compute cost under two price regimes (avoid RouterBench's
+"assumed price gap" trap):
+1. **Actual Gemma-4 OpenRouter pricing**: small 26B $0.06/$0.33, large 31B $0.12/$0.35 (in/out per M).
+2. **Frontier gap**: small $0.10/$0.30, large $10.00/$30.00 (per M).
+Report A vs E (always-large) and A vs F (always-small) as % delta. The over-escalation
+mechanism is shown by model attribution (only 9/45 paid tasks need large).
 
-**Prediction**: Config A will dominate B on token cost at equal or higher accuracy. Config A vs D isolates SymPy-LLM contribution.
+**Status**: Gemma-4 computed — A vs E = +51.5% at actual pricing (negative result),
+−91.8% at frontier pricing (positive). Recompute after B/C + 2nd family.
 
-## Experiment 2: Cost Analysis
+## Experiment 3: Local Serving Benchmark (E3) — UNBLOCKED (no API)
+Serve small + large tiers via vLLM on notebook GPU (RTX PRO 6000 Blackwell). Measure
+latency (p50/p95), throughput (tok/s) on the 67-task benchmark. Demonstrates the small
+model is ~2× faster, making routing latency-feasible. Families: Qwen2.5-7B/32B (done on
+notebook), Llama-3.1-8B/70B (pending GPU).
 
-Using token counts from Experiment 1, compute:
-
-| Metric | Formula |
-|--------|---------|
-| Cost per 1000 tasks | (total_api_tokens / 67) × 1000 × $price_per_token |
-| Savings vs always-large | (cost_B - cost_A) / cost_B × 100% |
-| Savings vs cascade-only | (cost_C - cost_A) / cost_C × 100% |
-| Zero-token rate | tier_0_tasks / total_tasks × 100% |
-
-Pricing reference (Gemma 4 on Fireworks):
-- Gemma 4 26B MoE: $0.06/M input, $0.18/M output (approximately)
-- Gemma 4 31B: $0.12/M input, $0.36/M output (approximately)
-
-## Experiment 3: AMD GPU Benchmark (optional)
-
-If compute budget permits:
-- Run HydraRoute's Tier Local (Qwen 1.5B GGUF via llama.cpp) on AMD GPU (MI300X, 96GB)
-- Measure tokens/second speedup vs CPU baseline
-- Show that local model becomes viable with GPU (not just CPU fallback)
+**Status**: Running on marimo notebook (Qwen2.5-7B then 32B).
 
 ## Compute Requirements
-
-| Experiment | Platform | GPU | Estimated Time | Estimated Cost |
-|------------|----------|-----|---------------|---------------|
-| E1: Ablation (API calls) | Local + OpenRouter | None needed (API) | ~30 min total | ~$0.50 API calls |
-| E2: Cost analysis | Derived from E1 | None | 0 min | $0 |
-| E3: GPU benchmark | Malimo | 1× GPU (96GB) | ~2 hours | ~$2 (free credits) |
-| **Optional**: Fine-tune Gemma 4 12B (LoRA) | Malimo/Kaggle | 1× GPU (24GB+) | ~4 hours | ~$4 (free credits) |
-| **Total** | | | **~6.5 hours** | **~$0.50** |
+| Exp | Platform | Cost | Status |
+|-----|----------|------|--------|
+| E1 | OpenRouter API | blocked: keys exhausted (total_credits=0) | A/D/E/F gemma-4 done |
+| E2 | derived | $0 | gemma-4 computed |
+| E3 | marimo notebook GPU | free | running |
 
 ## Limitations & Assumptions
-- API costs based on OpenRouter pricing (may differ from Fireworks)
-- 67-task benchmark representative but not exhaustive
-- GPU benchmark depends on successful ROCm/driver setup
-- Fine-tuning experiment is aspirational — may be dropped if time-limited
+- 67-task benchmark is representative, not exhaustive.
+- 2nd-family routing generalization blocked on API credit — reported as future work if
+  unresolvable.
+- Actual pricing used; no assumed price gaps (per RouterBench methodology).
